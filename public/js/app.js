@@ -10,12 +10,29 @@ function showPage(pageId) {
 }
 
 // Enregistrer une transaction sur Stellar
+function lireMontant(value) {
+  const normalized = String(value ?? '').replace(/\s/g, '').replace(',', '.');
+  const montant = Number(normalized);
+
+  if (!Number.isInteger(montant) || montant === 0) {
+    return null;
+  }
+
+  return montant;
+}
+
 async function enregistrerTransaction() {
-  const libelle = prompt('Libellé de la transaction :');
+  const libelle = prompt('Libellé de la transaction :')?.trim();
   if (!libelle) return;
   
-  const montant = prompt('Montant (FCFA) :');
-  if (!montant) return;
+  const montantSaisi = prompt('Montant (FCFA) :');
+  if (!montantSaisi) return;
+
+  const montant = lireMontant(montantSaisi);
+  if (montant === null) {
+    alert('Le montant doit etre un nombre entier non nul. Exemple : 5000 ou -150000.');
+    return;
+  }
 
   const btn = document.querySelector('.btn-primary');
   btn.textContent = '⏳ Enregistrement sur blockchain...';
@@ -30,19 +47,22 @@ async function enregistrerTransaction() {
 
     const data = await response.json();
 
+    if (!response.ok) {
+      throw new Error(data.error || 'Transaction refusee');
+    }
+
     if (data.hash) {
       // Ajouter la transaction dans le tableau
       const tbody = document.getElementById('transactions-list');
       const today = new Date().toLocaleDateString('fr-FR');
-      const montantNum = parseInt(montant);
-      const isPositif = montantNum > 0;
+      const isPositif = montant > 0;
 
       const row = document.createElement('tr');
       row.innerHTML = `
         <td>${today}</td>
         <td>${libelle}</td>
         <td class="${isPositif ? 'montant-positif' : 'montant-negatif'}">
-          ${isPositif ? '+' : ''}${montantNum.toLocaleString()} FCFA
+          ${isPositif ? '+' : ''}${montant.toLocaleString('fr-FR')} FCFA
         </td>
         <td class="hash">${data.hash.substring(0, 16)}...</td>
         <td><span class="badge-scelle">✓ Scellé</span></td>
@@ -52,7 +72,7 @@ async function enregistrerTransaction() {
       alert(`✅ Transaction enregistrée sur Stellar !\nHash : ${data.hash}`);
     }
   } catch (error) {
-    alert('❌ Erreur lors de l\'enregistrement');
+    alert(error.message || 'Erreur lors de l\'enregistrement');
     console.error(error);
   } finally {
     btn.textContent = '+ Nouvelle Transaction';

@@ -7,6 +7,17 @@ const { Horizon, Keypair, TransactionBuilder, Networks, Operation, BASE_FEE } = 
 
 const server = new Horizon.Server('https://horizon-testnet.stellar.org');
 
+function parseMontant(value) {
+  const normalized = String(value ?? '').replace(/\s/g, '').replace(',', '.');
+  const montant = Number(normalized);
+
+  if (!Number.isInteger(montant) || montant === 0) {
+    throw new Error('Le montant doit etre un nombre entier non nul.');
+  }
+
+  return montant;
+}
+
 // Enregistrer une transaction sur Stellar
 async function enregistrerStellar(libelle, montant) {
   const sourceKeypair = Keypair.fromSecret(process.env.SECRET_KEY);
@@ -57,15 +68,23 @@ const httpServer = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const { libelle, montant } = JSON.parse(body);
-        const hash = await enregistrerStellar(libelle, montant);
+        const libelleNettoye = String(libelle ?? '').trim();
+        const montantValide = parseMontant(montant);
+
+        if (!libelleNettoye) {
+          throw new Error('Le libelle est obligatoire.');
+        }
+
+        const hash = await enregistrerStellar(libelleNettoye, montantValide);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ 
           success: true, 
           hash,
+          montant: montantValide,
           explorer: `https://stellar.expert/explorer/testnet/tx/${hash}`
         }));
       } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));
       }
     });
