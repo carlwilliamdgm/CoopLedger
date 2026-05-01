@@ -1,0 +1,306 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: 'Segoe UI', sans-serif;
+}
+
+body {
+  display: flex;
+  background: #0f1117;
+  color: #ffffff;
+  min-height: 100vh;
+}
+
+/* SIDEBAR */
+.sidebar {
+  width: 250px;
+  background: #1a1d27;
+  padding: 24px 16px;
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  height: 100vh;
+  border-right: 1px solid #2a2d3a;
+}
+
+.logo {
+  font-size: 24px;
+  font-weight: 900;
+  margin-bottom: 40px;
+  letter-spacing: 1px;
+}
+
+.logo-coop { color: #ffffff; }
+.logo-ledger { color: #4caf50; }
+
+nav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
+
+.nav-item {
+  display: block;
+  padding: 12px 16px;
+  border-radius: 8px;
+  color: #8b8fa8;
+  text-decoration: none;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.nav-item:hover, .nav-item.active {
+  background: #4caf50;
+  color: #ffffff;
+}
+
+.sidebar-footer {
+  font-size: 12px;
+  color: #4a4d5e;
+  line-height: 1.8;
+}
+
+/* MAIN CONTENT */
+.main-content {
+  margin-left: 250px;
+  padding: 32px;
+  flex: 1;
+  min-height: 100vh;
+}
+
+.page { display: none; }
+.page.active { display: block; }
+
+h1 {
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 24px;
+  color: #ffffff;
+}
+
+/* SOLDE CARD */
+.solde-card {
+  background: linear-gradient(135deg, #1e7e34, #4caf50);
+  border-radius: 16px;
+  padding: 32px;
+  margin-bottom: 24px;
+}
+
+.solde-label {
+  font-size: 14px;
+  opacity: 0.85;
+  margin-bottom: 8px;
+}
+
+.solde-montant {
+  font-size: 42px;
+  font-weight: 900;
+  margin-bottom: 8px;
+}
+
+.solde-blockchain {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+/* STATS GRID */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  background: #1a1d27;
+  border-radius: 12px;
+  padding: 20px;
+  border: 1px solid #2a2d3a;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: #8b8fa8;
+  margin-bottom: 8px;
+}
+
+.stat-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: #4caf50;
+}
+
+/* TABLE */
+.table-container {
+  background: #1a1d27;
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 24px;
+  border: 1px solid #2a2d3a;
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th {
+  text-align: left;
+  padding: 12px 16px;
+  font-size: 12px;
+  color: #8b8fa8;
+  border-bottom: 1px solid #2a2d3a;
+  text-transform: uppercase;
+}
+
+td {
+  padding: 14px 16px;
+  font-size: 14px;
+  border-bottom: 1px solid #1e2130;
+}
+
+.montant-positif { color: #4caf50; font-weight: 600; }
+.montant-negatif { color: #f44336; font-weight: 600; }
+
+.hash {
+  font-family: monospace;
+  font-size: 12px;
+  color: #8b8fa8;
+}
+
+.badge-scelle {
+  background: #1e3a2a;
+  color: #4caf50;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+}
+
+.badge-actif {
+  background: #1e3a2a;
+  color: #4caf50;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+}
+
+.badge-inactif {
+  background: #3a1e1e;
+  color: #f44336;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+}
+
+/* BOUTONS */
+.btn-primary {
+  background: #4caf50;
+  color: white;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-primary:hover { background: #388e3c; }
+
+/* VOTE */
+.vote-card {
+  background: #1a1d27;
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 16px;
+  border: 1px solid #2a2d3a;
+}
+
+.vote-card h3 {
+  font-size: 18px;
+  margin-bottom: 8px;
+}
+
+.vote-budget {
+  font-size: 13px;
+  color: #8b8fa8;
+  margin-bottom: 16px;
+}
+
+.vote-barre {
+  display: flex;
+  border-radius: 8px;
+  overflow: hidden;
+  height: 32px;
+  margin-bottom: 8px;
+}
+
+.vote-pour {
+  background: #4caf50;
+  display: flex;
+  align-items: center;
+  padding-left: 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.vote-contre {
+  background: #f44336;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  flex: 1;
+}
+
+.vote-info {
+  font-size: 12px;
+  color: #8b8fa8;
+  margin-bottom: 16px;
+}
+
+.vote-actions {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.btn-pour {
+  background: #4caf50;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.btn-contre {
+  background: #f44336;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.vote-blockchain {
+  font-size: 12px;
+  color: #4caf50;
+}
+
+.membres-stats {
+  background: #1a1d27;
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 20px;
+  border: 1px solid #2a2d3a;
+  font-size: 14px;
+  color: #8b8fa8;
+}

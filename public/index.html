@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CoopLedger — Coopérative Agri-Kara de Broukou</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <div class="logo">
+      <span class="logo-coop">COOP</span><span class="logo-ledger">LEDGER</span>
+    </div>
+    <nav>
+      <a href="#" class="nav-item active" onclick="showPage('dashboard')">📊 Dashboard</a>
+      <a href="#" class="nav-item" onclick="showPage('transactions')">📋 Transactions</a>
+      <a href="#" class="nav-item" onclick="showPage('vote')">🗳️ Vote</a>
+      <a href="#" class="nav-item" onclick="showPage('membres')">👥 Membres</a>
+    </nav>
+    <div class="sidebar-footer">
+      <p>Coopérative Agri-Kara</p>
+      <p>de Broukou</p>
+      <p>120 membres</p>
+    </div>
+  </div>
+
+  <!-- CONTENU PRINCIPAL -->
+  <div class="main-content">
+    <!-- DASHBOARD -->
+    <div id="page-dashboard" class="page active">
+      <h1>Dashboard</h1>
+      <div class="solde-card">
+        <p class="solde-label">Solde actuel de la coopérative</p>
+        <p class="solde-montant">1 250 000 FCFA</p>
+        <p class="solde-blockchain">🔗 Enregistré sur Stellar Testnet</p>
+      </div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <p class="stat-label">Cotisations ce mois</p>
+          <p class="stat-value">480 000 FCFA</p>
+        </div>
+        <div class="stat-card">
+          <p class="stat-label">Dépenses ce mois</p>
+          <p class="stat-value">230 000 FCFA</p>
+        </div>
+        <div class="stat-card">
+          <p class="stat-label">Membres actifs</p>
+          <p class="stat-value">120</p>
+        </div>
+        <div class="stat-card">
+          <p class="stat-label">Votes en cours</p>
+          <p class="stat-value">2</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- TRANSACTIONS -->
+    <div id="page-transactions" class="page">
+      <h1>Historique des Transactions</h1>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Libellé</th>
+              <th>Montant</th>
+              <th>Hash Blockchain</th>
+              <th>Statut</th>
+            </tr>
+          </thead>
+          <tbody id="transactions-list">
+            <tr>
+              <td>01/05/2026</td>
+              <td>Cotisation Membre 001</td>
+              <td class="montant-positif">+5 000 FCFA</td>
+              <td class="hash">f0eba56f530b619f...</td>
+              <td><span class="badge-scelle">✓ Scellé</span></td>
+            </tr>
+            <tr>
+              <td>15/04/2026</td>
+              <td>Achat Engrais</td>
+              <td class="montant-negatif">-150 000 FCFA</td>
+              <td class="hash">a3c12d8e94f1b2...</td>
+              <td><span class="badge-scelle">✓ Scellé</span></td>
+            </tr>
+            <tr>
+              <td>10/04/2026</td>
+              <td>Vente groupée Soja</td>
+              <td class="montant-positif">+2 450 000 FCFA</td>
+              <td class="hash">b7e45a1c23d09f...</td>
+              <td><span class="badge-scelle">✓ Scellé</span></td>
+            </tr>
+            <tr>
+              <td>05/04/2026</td>
+              <td>Cotisations Membres</td>
+              <td class="montant-positif">+120 000 FCFA</td>
+              <td class="hash">c9f23b7d45e18a...</td>
+              <td><span class="badge-scelle">✓ Scellé</span></td>
+            </tr>
+            <tr>
+              <td>01/04/2026</td>
+              <td>Transport récolte</td>
+              <td class="montant-negatif">-45 000 FCFA</td>
+              <td class="hash">d2a56c8e71b34f...</td>
+              <td><span class="badge-scelle">✓ Scellé</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <button class="btn-primary" onclick="enregistrerTransaction()">
+        + Nouvelle Transaction
+      </button>
+    </div>
+
+    <!-- VOTE -->
+    <div id="page-vote" class="page">
+      <h1>Votes en cours</h1>
+      <div class="vote-card">
+        <h3>Construction d'un hangar de stockage</h3>
+        <p class="vote-budget">Budget estimé : 3 500 000 FCFA</p>
+        <div class="vote-barre">
+          <div class="vote-pour" style="width: 80%">80% Pour</div>
+          <div class="vote-contre" style="width: 20%">20%</div>
+        </div>
+        <p class="vote-info">96 votes pour · 24 votes contre · 0 abstentions</p>
+        <div class="vote-actions">
+          <button class="btn-pour">✓ Voter Pour</button>
+          <button class="btn-contre">✗ Voter Contre</button>
+        </div>
+        <p class="vote-blockchain">🔗 Résultats enregistrés sur Stellar</p>
+      </div>
+      <div class="vote-card">
+        <h3>Acquisition tracteur Massey Ferguson</h3>
+        <p class="vote-budget">Budget estimé : 7 500 000 FCFA</p>
+        <div class="vote-barre">
+          <div class="vote-pour" style="width: 65%">65% Pour</div>
+          <div class="vote-contre" style="width: 35%">35%</div>
+        </div>
+        <p class="vote-info">78 votes pour · 42 votes contre · 0 abstentions</p>
+        <div class="vote-actions">
+          <button class="btn-pour">✓ Voter Pour</button>
+          <button class="btn-contre">✗ Voter Contre</button>
+        </div>
+        <p class="vote-blockchain">🔗 Résultats enregistrés sur Stellar</span></p>
+      </div>
+    </div>
+
+    <!-- MEMBRES -->
+    <div id="page-membres" class="page">
+      <h1>Membres — Coopérative Agri-Kara de Broukou</h1>
+      <div class="membres-stats">
+        <p>120 membres actifs · Région de Kara · Filière Maïs & Soja</p>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Nom</th>
+              <th>Rôle</th>
+              <th>Cotisations</th>
+              <th>Statut</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>001</td>
+              <td>Kofi AGBEKO</td>
+              <td>Président</td>
+              <td>60 000 FCFA</td>
+              <td><span class="badge-actif">Actif</span></td>
+            </tr>
+            <tr>
+              <td>002</td>
+              <td>Ama TCHAMDJA</td>
+              <td>Trésorière</td>
+              <td>60 000 FCFA</td>
+              <td><span class="badge-actif">Actif</span></td>
+            </tr>
+            <tr>
+              <td>003</td>
+              <td>Koffi BOUKPESSI</td>
+              <td>Membre</td>
+              <td>45 000 FCFA</td>
+              <td><span class="badge-actif">Actif</span></td>
+            </tr>
+            <tr>
+              <td>004</td>
+              <td>Abla GNASSINGBE</td>
+              <td>Membre</td>
+              <td>60 000 FCFA</td>
+              <td><span class="badge-actif">Actif</span></td>
+            </tr>
+            <tr>
+              <td>005</td>
+              <td>Yao DJOBO</td>
+              <td>Membre</td>
+              <td>30 000 FCFA</td>
+              <td><span class="badge-inactif">Inactif</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>

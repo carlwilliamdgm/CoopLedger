@@ -1,0 +1,95 @@
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+require('dotenv').config();
+
+const { Horizon, Keypair, TransactionBuilder, Networks, Operation, BASE_FEE } = require('@stellar/stellar-sdk');
+
+const server = new Horizon.Server('https://horizon-testnet.stellar.org');
+
+// Enregistrer une transaction sur Stellar
+async function enregistrerStellar(libelle, montant) {
+  const sourceKeypair = Keypair.fromSecret(process.env.SECRET_KEY);
+  const sourcePublicKey = process.env.PUBLIC_KEY;
+
+  const account = await server.loadAccount(sourcePublicKey);
+
+  const transaction = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: Networks.TESTNET,
+  })
+    .addOperation(Operation.manageData({
+      name: libelle.substring(0, 64),
+      value: montant.toString().substring(0, 64),
+    }))
+    .setTimeout(30)
+    .build();
+
+  transaction.sign(sourceKeypair);
+  const result = await server.submitTransaction(transaction);
+  return result.hash;
+}
+
+// Servir les fichiers statiques
+function serveFile(res, filePath, contentType) {
+  fs.readFile(filePath, (err, data) => {
+    if (err) {
+      res.writeHead(404);
+      res.end('Not found');
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': contentType });
+    res.end(data);
+  });
+}
+
+// Serveur HTTP
+const httpServer = http.createServer(async (req, res) => {
+  // CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  // API Transaction
+  if (req.method === 'POST' && req.url === '/api/transaction') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', async () => {
+      try {
+        const { libelle, montant } = JSON.parse(body);
+        const hash = await enregistrerStellar(libelle, montant);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ 
+          success: true, 
+          hash,
+          explorer: `https://stellar.expert/explorer/testnet/tx/${hash}`
+        }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // Fichiers statiques
+  const routes = {
+    '/': ['public/index.html', 'text/html'],
+    '/css/style.css': ['public/css/style.css', 'text/css'],
+    '/js/app.js': ['public/js/app.js', 'application/javascript'],
+  };
+
+  const route = routes[req.url];
+  if (route) {
+    serveFile(res, path.join(__dirname, route[0]), route[1]);
+  } else {
+    res.writeHead(404);
+    res.end('Not found');
+  }
+});
+
+httpServer.listen(3000, () => {
+  console.log('✅ CoopLedger en ligne sur http://localhost:3000');
+  console.log('🔗 Réseau : Stellar Testnet');
+  console.log('📊 Dashboard : http://localhost:3000');
+});
