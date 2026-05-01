@@ -88,8 +88,10 @@ const httpServer = http.createServer(async (req, res) => {
   }
 });
 
-httpServer.listen(3000, () => {
-  console.log('✅ CoopLedger en ligne sur http://localhost:3000');
-  console.log('🔗 Réseau : Stellar Testnet');
-  console.log('📊 Dashboard : http://localhost:3000');
+const PORT = process.env.PORT || 3000;
+
+httpServer.listen(PORT, () => {
+  console.log(`CoopLedger en ligne sur le port ${PORT}`);
+  console.log('Reseau : Stellar Testnet');
+  console.log(`Dashboard : http://localhost:${PORT}`);
 });
