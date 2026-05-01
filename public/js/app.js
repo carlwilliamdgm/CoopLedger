@@ -1,26 +1,68 @@
 let transactions = [];
 let demoIndex = 0;
+let currentRole = 'president';
+
+const roles = {
+  president: {
+    label: 'President',
+    description: 'Peut proposer une operation soumise au vote.',
+    canSuggest: true,
+    canTransact: false,
+    canVote: false
+  },
+  tresoriere: {
+    label: 'Tresoriere',
+    description: 'Peut ajouter une transaction financiere scellee.',
+    canSuggest: false,
+    canTransact: true,
+    canVote: false
+  },
+  membre: {
+    label: 'Membre',
+    description: 'Peut consulter les preuves et voter les operations.',
+    canSuggest: false,
+    canTransact: false,
+    canVote: true
+  },
+  observateur: {
+    label: 'Observateur',
+    description: 'Peut seulement consulter et verifier les preuves.',
+    canSuggest: false,
+    canTransact: false,
+    canVote: false
+  }
+};
 
 const demoSteps = [
   {
     page: 'dashboard',
+    role: 'observateur',
     title: 'Tableau de bord',
     text: 'On commence avec une vue claire de la cooperative : solde, activite du mois, votes et score de transparence.'
   },
   {
     page: 'transactions',
+    role: 'observateur',
     title: 'Historique scelle',
     text: 'Chaque ligne importante peut etre reliee a une preuve blockchain. Le hash sert de trace publique.'
   },
   {
     page: 'transactions',
+    role: 'tresoriere',
     title: 'Nouvelle transaction',
-    text: 'La tresoriere saisit un libelle et un montant. Les montants invalides sont bloques avant enregistrement.'
+    text: 'En role Tresoriere, le bouton d ajout est disponible pour sceller une transaction.'
   },
   {
     page: 'vote',
-    title: 'Gouvernance',
-    text: 'La page vote montre comment la cooperative peut associer la transparence financiere a la decision collective.'
+    role: 'president',
+    title: 'Proposition du president',
+    text: 'En role President, une operation peut etre suggeree et transmise aux membres pour vote.'
+  },
+  {
+    page: 'vote',
+    role: 'membre',
+    title: 'Vote des membres',
+    text: 'En role Membre, les boutons de vote sont actifs. En Observateur, la consultation reste seule autorisee.'
   }
 ];
 
@@ -79,6 +121,19 @@ function renderTransactions() {
   document.getElementById('proof-last').textContent = formatDate(transactions[0].date);
 }
 
+function changerRole(role) {
+  currentRole = role;
+  const config = roles[currentRole];
+
+  document.getElementById('role-description').textContent = config.description;
+  document.getElementById('new-transaction-btn').disabled = !config.canTransact;
+  document.getElementById('proposal-btn').disabled = !config.canSuggest;
+
+  document.querySelectorAll('.btn-pour, .btn-contre').forEach(button => {
+    button.disabled = !config.canVote;
+  });
+}
+
 async function chargerTransactions() {
   try {
     const response = await fetch('/api/transactions');
@@ -104,6 +159,11 @@ function lireMontant(value) {
 }
 
 async function enregistrerTransaction() {
+  if (!roles[currentRole].canTransact) {
+    alert('Seule la tresoriere peut ajouter une transaction.');
+    return;
+  }
+
   const libelle = prompt('Libelle de la transaction :')?.trim();
   if (!libelle) return;
 
@@ -162,14 +222,40 @@ function fermerRecu() {
   document.getElementById('receipt-panel').classList.add('hidden');
 }
 
+function suggererOperation() {
+  if (!roles[currentRole].canSuggest) {
+    alert('Seul le president peut suggerer une operation.');
+    return;
+  }
+
+  const titre = prompt('Operation a soumettre au vote :')?.trim();
+  if (!titre) return;
+
+  const budget = prompt('Budget estime (FCFA) :')?.trim();
+  if (!budget) return;
+
+  const montantBudget = lireMontant(budget);
+  if (montantBudget === null || montantBudget < 0) {
+    alert('Le budget doit etre un nombre entier positif.');
+    return;
+  }
+
+  document.getElementById('proposal-title').textContent = titre;
+  document.getElementById('proposal-budget').textContent = `Budget estime : ${montantBudget.toLocaleString('fr-FR')} FCFA`;
+  document.getElementById('proposal-panel').classList.remove('hidden');
+  alert('Operation suggeree. Passe en role Membre pour simuler la validation par vote.');
+}
+
 function lancerDemo() {
   demoIndex = 0;
-  document.getElementById('demo-overlay').classList.remove('hidden');
+  document.getElementById('demo-guide').classList.remove('hidden');
   afficherEtapeDemo();
 }
 
 function afficherEtapeDemo() {
   const step = demoSteps[demoIndex];
+  document.getElementById('role-select').value = step.role;
+  changerRole(step.role);
   showPage(step.page);
   document.getElementById('demo-title').textContent = step.title;
   document.getElementById('demo-text').textContent = step.text;
@@ -187,12 +273,13 @@ function etapeDemoSuivante() {
 }
 
 function arreterDemo() {
-  document.getElementById('demo-overlay').classList.add('hidden');
+  document.getElementById('demo-guide').classList.add('hidden');
 }
 
 // Voter
 document.addEventListener('DOMContentLoaded', () => {
   chargerTransactions();
+  changerRole(currentRole);
 
   document.querySelectorAll('.nav-item').forEach(item => {
     item.addEventListener('click', function(event) {
@@ -206,8 +293,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.querySelectorAll('.btn-pour, .btn-contre').forEach(btn => {
     btn.addEventListener('click', function() {
-      const voteCard = this.closest('.vote-card');
-      const titre = voteCard.querySelector('h3').textContent;
+      if (!roles[currentRole].canVote) {
+        alert('Seuls les membres peuvent voter.');
+        return;
+      }
+
+      const voteCard = this.closest('.vote-card') || this.closest('.proposal-panel');
+      const titre = voteCard.querySelector('h3, h2').textContent;
       const choix = this.classList.contains('btn-pour') ? 'POUR' : 'CONTRE';
 
       alert(`Vote enregistre.\nProposition : ${titre}\nVotre choix : ${choix}\nEnregistre sur Stellar Testnet`);

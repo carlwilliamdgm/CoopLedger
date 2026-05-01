@@ -12,6 +12,16 @@
     <div class="logo">
       <span class="logo-coop">COOP</span><span class="logo-ledger">LEDGER</span>
     </div>
+    <div class="role-switcher">
+      <label for="role-select">Role simule</label>
+      <select id="role-select" onchange="changerRole(this.value)">
+        <option value="president">President</option>
+        <option value="tresoriere">Tresoriere</option>
+        <option value="membre">Membre</option>
+        <option value="observateur">Observateur</option>
+      </select>
+      <p id="role-description">Peut proposer une operation soumise au vote.</p>
+    </div>
     <nav>
       <a href="#" class="nav-item active" onclick="showPage('dashboard')">📊 Dashboard</a>
       <a href="#" class="nav-item" onclick="showPage('transactions')">📋 Transactions</a>
@@ -80,7 +90,7 @@
     <div id="page-transactions" class="page">
       <div class="page-header">
         <h1>Historique des Transactions</h1>
-        <button class="btn-primary" onclick="enregistrerTransaction()">+ Nouvelle Transaction</button>
+        <button id="new-transaction-btn" class="btn-primary" onclick="enregistrerTransaction()">+ Nouvelle Transaction</button>
       </div>
       <div class="table-container">
         <table>
@@ -128,7 +138,21 @@
 
     <!-- VOTE -->
     <div id="page-vote" class="page">
-      <h1>Votes en cours</h1>
+      <div class="page-header">
+        <h1>Votes en cours</h1>
+        <button id="proposal-btn" class="btn-primary" onclick="suggererOperation()">+ Suggérer une opération</button>
+      </div>
+      <div id="proposal-panel" class="proposal-panel hidden">
+        <div>
+          <p class="panel-label">Operation suggeree par le president</p>
+          <h2 id="proposal-title">-</h2>
+          <p id="proposal-budget" class="vote-budget">-</p>
+        </div>
+        <div class="vote-actions">
+          <button class="btn-pour">Voter Pour</button>
+          <button class="btn-contre">Voter Contre</button>
+        </div>
+      </div>
       <div class="vote-card">
         <h3>Construction d'un hangar de stockage</h3>
         <p class="vote-budget">Budget estimé : 3 500 000 FCFA</p>
@@ -218,7 +242,7 @@
     </div>
   </div>
 
-  <div id="demo-overlay" class="demo-overlay hidden">
+  <div id="demo-guide" class="demo-guide hidden">
     <div class="demo-card">
       <p class="panel-label">Demo guidee</p>
       <h2 id="demo-title">CoopLedger</h2>
