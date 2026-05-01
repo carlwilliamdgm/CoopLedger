@@ -1,0 +1,47 @@
+[
+  {
+    "id": "demo-001",
+    "date": "2026-05-01T10:00:00.000Z",
+    "libelle": "Cotisation Membre 001",
+    "montant": 5000,
+    "hash": "f0eba56f530b619f000000000000000000000000000000000000000000000000",
+    "explorer": "https://stellar.expert/explorer/testnet/tx/f0eba56f530b619f000000000000000000000000000000000000000000000000",
+    "statut": "Scelle"
+  },
+  {
+    "id": "demo-002",
+    "date": "2026-04-15T10:00:00.000Z",
+    "libelle": "Achat Engrais",
+    "montant": -150000,
+    "hash": "a3c12d8e94f1b200000000000000000000000000000000000000000000000000",
+    "explorer": "https://stellar.expert/explorer/testnet/tx/a3c12d8e94f1b200000000000000000000000000000000000000000000000000",
+    "statut": "Scelle"
+  },
+  {
+    "id": "demo-003",
+    "date": "2026-04-10T10:00:00.000Z",
+    "libelle": "Vente groupee Soja",
+    "montant": 2450000,
+    "hash": "b7e45a1c23d09f00000000000000000000000000000000000000000000000000",
+    "explorer": "https://stellar.expert/explorer/testnet/tx/b7e45a1c23d09f00000000000000000000000000000000000000000000000000",
+    "statut": "Scelle"
+  },
+  {
+    "id": "demo-004",
+    "date": "2026-04-05T10:00:00.000Z",
+    "libelle": "Cotisations Membres",
+    "montant": 120000,
+    "hash": "c9f23b7d45e18a00000000000000000000000000000000000000000000000000",
+    "explorer": "https://stellar.expert/explorer/testnet/tx/c9f23b7d45e18a00000000000000000000000000000000000000000000000000",
+    "statut": "Scelle"
+  },
+  {
+    "id": "demo-005",
+    "date": "2026-04-01T10:00:00.000Z",
+    "libelle": "Transport recolte",
+    "montant": -45000,
+    "hash": "d2a56c8e71b34f00000000000000000000000000000000000000000000000000",
+    "explorer": "https://stellar.expert/explorer/testnet/tx/d2a56c8e71b34f00000000000000000000000000000000000000000000000000",
+    "statut": "Scelle"
+  }
+]

@@ -6,6 +6,27 @@ require('dotenv').config();
 const { Horizon, Keypair, TransactionBuilder, Networks, Operation, BASE_FEE } = require('@stellar/stellar-sdk');
 
 const server = new Horizon.Server('https://horizon-testnet.stellar.org');
+const DATA_DIR = path.join(__dirname, 'data');
+const TRANSACTIONS_FILE = path.join(DATA_DIR, 'transactions.json');
+
+function sendJson(res, status, payload) {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(payload));
+}
+
+function readTransactions() {
+  try {
+    const data = fs.readFileSync(TRANSACTIONS_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch (err) {
+    return [];
+  }
+}
+
+function saveTransactions(transactions) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(TRANSACTIONS_FILE, JSON.stringify(transactions, null, 2));
+}
 
 function parseMontant(value) {
   const normalized = String(value ?? '').replace(/\s/g, '').replace(',', '.');
@@ -61,6 +82,11 @@ const httpServer = http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
+  if (req.method === 'GET' && req.url === '/api/transactions') {
+    sendJson(res, 200, { transactions: readTransactions() });
+    return;
+  }
+
   // API Transaction
   if (req.method === 'POST' && req.url === '/api/transaction') {
     let body = '';
@@ -76,16 +102,23 @@ const httpServer = http.createServer(async (req, res) => {
         }
 
         const hash = await enregistrerStellar(libelleNettoye, montantValide);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ 
-          success: true, 
-          hash,
+        const transaction = {
+          id: Date.now().toString(),
+          date: new Date().toISOString(),
+          libelle: libelleNettoye,
           montant: montantValide,
-          explorer: `https://stellar.expert/explorer/testnet/tx/${hash}`
-        }));
+          hash,
+          explorer: `https://stellar.expert/explorer/testnet/tx/${hash}`,
+          statut: 'Scelle'
+        };
+
+        const transactions = readTransactions();
+        transactions.unshift(transaction);
+        saveTransactions(transactions);
+
+        sendJson(res, 200, { success: true, transaction });
       } catch (err) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err.message }));
+        sendJson(res, 400, { error: err.message });
       }
     });
     return;

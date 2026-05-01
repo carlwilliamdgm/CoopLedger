@@ -18,6 +18,7 @@
       <a href="#" class="nav-item" onclick="showPage('vote')">🗳️ Vote</a>
       <a href="#" class="nav-item" onclick="showPage('membres')">👥 Membres</a>
     </nav>
+    <button class="demo-button" onclick="lancerDemo()">Lancer la demo</button>
     <div class="sidebar-footer">
       <p>Coopérative Agri-Kara</p>
       <p>de Broukou</p>
@@ -53,11 +54,34 @@
           <p class="stat-value">2</p>
         </div>
       </div>
+      <div class="transparency-panel">
+        <div>
+          <p class="panel-label">Score de transparence</p>
+          <p class="panel-score">92%</p>
+        </div>
+        <div class="proof-grid">
+          <div>
+            <span id="proof-count">5</span>
+            <small>transactions scellées</small>
+          </div>
+          <div>
+            <span>2</span>
+            <small>votes publiés</small>
+          </div>
+          <div>
+            <span id="proof-last">01/05/2026</span>
+            <small>dernière preuve</small>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- TRANSACTIONS -->
     <div id="page-transactions" class="page">
-      <h1>Historique des Transactions</h1>
+      <div class="page-header">
+        <h1>Historique des Transactions</h1>
+        <button class="btn-primary" onclick="enregistrerTransaction()">+ Nouvelle Transaction</button>
+      </div>
       <div class="table-container">
         <table>
           <thead>
@@ -71,46 +95,35 @@
           </thead>
           <tbody id="transactions-list">
             <tr>
-              <td>01/05/2026</td>
-              <td>Cotisation Membre 001</td>
-              <td class="montant-positif">+5 000 FCFA</td>
-              <td class="hash">f0eba56f530b619f...</td>
-              <td><span class="badge-scelle">✓ Scellé</span></td>
-            </tr>
-            <tr>
-              <td>15/04/2026</td>
-              <td>Achat Engrais</td>
-              <td class="montant-negatif">-150 000 FCFA</td>
-              <td class="hash">a3c12d8e94f1b2...</td>
-              <td><span class="badge-scelle">✓ Scellé</span></td>
-            </tr>
-            <tr>
-              <td>10/04/2026</td>
-              <td>Vente groupée Soja</td>
-              <td class="montant-positif">+2 450 000 FCFA</td>
-              <td class="hash">b7e45a1c23d09f...</td>
-              <td><span class="badge-scelle">✓ Scellé</span></td>
-            </tr>
-            <tr>
-              <td>05/04/2026</td>
-              <td>Cotisations Membres</td>
-              <td class="montant-positif">+120 000 FCFA</td>
-              <td class="hash">c9f23b7d45e18a...</td>
-              <td><span class="badge-scelle">✓ Scellé</span></td>
-            </tr>
-            <tr>
-              <td>01/04/2026</td>
-              <td>Transport récolte</td>
-              <td class="montant-negatif">-45 000 FCFA</td>
-              <td class="hash">d2a56c8e71b34f...</td>
-              <td><span class="badge-scelle">✓ Scellé</span></td>
+              <td colspan="5">Chargement des transactions...</td>
             </tr>
           </tbody>
         </table>
       </div>
-      <button class="btn-primary" onclick="enregistrerTransaction()">
-        + Nouvelle Transaction
-      </button>
+      <section id="receipt-panel" class="receipt-panel hidden">
+        <div class="receipt-header">
+          <div>
+            <p class="panel-label">Recu blockchain</p>
+            <h2 id="receipt-title">Transaction scellee</h2>
+          </div>
+          <button class="btn-secondary" onclick="fermerRecu()">Fermer</button>
+        </div>
+        <div class="receipt-grid">
+          <div>
+            <small>Date</small>
+            <strong id="receipt-date">-</strong>
+          </div>
+          <div>
+            <small>Montant</small>
+            <strong id="receipt-amount">-</strong>
+          </div>
+          <div class="receipt-full">
+            <small>Hash Stellar</small>
+            <code id="receipt-hash">-</code>
+          </div>
+        </div>
+        <a id="receipt-link" class="proof-link" href="#" target="_blank" rel="noreferrer">Verifier sur Stellar Expert</a>
+      </section>
     </div>
 
     <!-- VOTE -->
@@ -201,6 +214,18 @@
             </tr>
           </tbody>
         </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="demo-overlay" class="demo-overlay hidden">
+    <div class="demo-card">
+      <p class="panel-label">Demo guidee</p>
+      <h2 id="demo-title">CoopLedger</h2>
+      <p id="demo-text">Presentation du prototype.</p>
+      <div class="demo-actions">
+        <button class="btn-secondary" onclick="arreterDemo()">Quitter</button>
+        <button class="btn-primary" onclick="etapeDemoSuivante()">Suivant</button>
       </div>
     </div>
   </div>
