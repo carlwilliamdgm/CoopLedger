@@ -34,4 +34,5 @@ async function enregistrerTransaction(libelle, montant) {
 }
 
 // Test — cotisation membre
-enregistrerTransaction('Cotisation_Membre_001', 5000);
+// Commenté pour éviter l'exécution automatique au chargement
+// enregistrerTransaction('Cotisation_Membre_001', 5000);
