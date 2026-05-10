@@ -30,6 +30,10 @@
 
               <label for="login-password">Mot de passe</label>
               <input id="login-password" type="password" autocomplete="current-password" required>
+              <label class="remember-row">
+                <input id="remember-login" type="checkbox">
+                <span>Rester connecté</span>
+              </label>
 
               <button class="btn-primary" type="submit">Se connecter</button>
             </form>
@@ -49,6 +53,11 @@
 
           <label for="register-password">Mot de passe</label>
           <input id="register-password" type="password" minlength="6" autocomplete="new-password" required>
+
+          <label class="remember-row">
+            <input id="register-observer" type="checkbox">
+            <span>Je souhaite m'inscrire comme Observateur uniquement</span>
+          </label>
 
           <button class="btn-primary" type="submit">Créer le compte et entrer</button>
         </form>

@@ -3,6 +3,7 @@ let members = [];
 let votes = [];
 let cotisations = [];
 let notifications = [];
+let candidatures = [];
 let currentUser = null;
 let financialHealth = null;
 let sseAbortController = null;
@@ -12,15 +13,19 @@ const TOKEN_KEY = 'token';
 const PENDING_TRANSACTIONS_KEY = 'pendingTransactions';
 
 function getToken() {
-  return sessionStorage.getItem(TOKEN_KEY);
+  return localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY);
 }
 
-function setToken(token) {
-  sessionStorage.setItem(TOKEN_KEY, token);
+function setToken(token, persist = false) {
+  sessionStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(TOKEN_KEY);
+  const storage = persist ? localStorage : sessionStorage;
+  storage.setItem(TOKEN_KEY, token);
 }
 
 function clearSession() {
   sessionStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(TOKEN_KEY);
   currentUser = null;
 }
 
@@ -54,6 +59,7 @@ function getPermissions(role) {
     canManageMembers: ['admin', 'secretaire'].includes(normalized),
     canVerify: normalized === 'verificateur',
     canViewReport: ['president', 'tresorier', 'tresoriere', 'verificateur'].includes(normalized),
+    isAdmin: normalized === 'admin',
   };
 }
 
@@ -163,8 +169,21 @@ function openSessionFromToken(token) {
   document.getElementById('profile-description').textContent = getProfileDescription(currentUser.role);
 
   applyPermissions();
-  loadProtectedData();
+  startAfterLogin();
   startNotificationsStream();
+}
+
+async function startAfterLogin() {
+  if (normalizeRole(currentUser?.role) === 'admin') {
+    const config = await apiFetch('/api/config');
+    if (!config.nom_coop) {
+      showPage('setup-config');
+      return;
+    }
+  }
+
+  showPage('dashboard');
+  loadProtectedData();
 }
 
 function showPage(pageId, navTarget) {
@@ -183,6 +202,7 @@ function installDynamicInterface() {
   installExtraNavItems();
   installCotisationsPage();
   installNotificationsPage();
+  installStartupPages();
   markDashboardNodes();
 }
 
@@ -197,6 +217,10 @@ function renderAuthForms() {
         <input id="login-username" type="text" placeholder="komi_adjoka" autocomplete="username" required>
         <label for="login-password">Mot de passe</label>
         <input id="login-password" type="password" autocomplete="current-password" required>
+        <label class="remember-row">
+          <input id="remember-login" type="checkbox">
+          <span>Rester connecte</span>
+        </label>
         <button class="btn-primary" type="submit">Se connecter</button>
       </form>
     `;
@@ -214,6 +238,10 @@ function renderAuthForms() {
       <input id="register-email" type="email" placeholder="komi@coop.test" required>
       <label for="register-password">Mot de passe</label>
       <input id="register-password" type="password" minlength="6" autocomplete="new-password" required>
+      <label class="remember-row">
+        <input id="register-observer" type="checkbox">
+        <span>Je souhaite m'inscrire comme Observateur uniquement</span>
+      </label>
       <button class="btn-primary" type="submit">Creer le compte et entrer</button>
     `;
     registerForm.onsubmit = enregistrerProfil;
@@ -225,8 +253,8 @@ function installExtraNavItems() {
   if (!nav || nav.querySelector('[data-page="cotisations"]')) return;
 
   nav.insertAdjacentHTML('beforeend', `
-    <a href="#" class="nav-item" data-page="cotisations">Cotisations</a>
-    <a href="#" class="nav-item" data-page="notifications">Notifications</a>
+    <a href="#" class="nav-item" data-page="cotisations">💰 Cotisations</a>
+    <a href="#" class="nav-item" data-page="notifications">🔔 Notifications</a>
   `);
 
   nav.querySelectorAll('.nav-item').forEach(item => {
@@ -236,6 +264,55 @@ function installExtraNavItems() {
       if (page) showPage(page, item);
     });
   });
+}
+
+function installStartupPages() {
+  const main = document.querySelector('.main-content');
+  if (!main || document.getElementById('page-setup-config')) return;
+
+  main.insertAdjacentHTML('beforeend', `
+    <div id="page-setup-config" class="page">
+      <h1>Configuration initiale</h1>
+      <form class="login-panel" onsubmit="configurerCoop(event)">
+        <label for="setup-coop-name">Nom de la cooperative</label>
+        <input id="setup-coop-name" type="text" required>
+        <label for="setup-mandate-duration">Duree des mandats en mois</label>
+        <input id="setup-mandate-duration" type="number" min="1" value="12" required>
+        <button class="btn-primary" type="submit">Configurer</button>
+      </form>
+      <div id="setup-key-panel" class="receipt-panel hidden">
+        <p class="panel-label">Cle unique generee une seule fois</p>
+        <code id="setup-unique-key">-</code>
+        <p>Conservez cette cle maintenant. Elle ne sera pas recuperable depuis l interface.</p>
+        <button class="btn-secondary" onclick="copierCleUnique()">Copier</button>
+        <button class="btn-primary" onclick="showPage('setup-members')">Constituer le bureau initial</button>
+      </div>
+    </div>
+    <div id="page-setup-members" class="page">
+      <h1>Constituer le bureau initial</h1>
+      <form class="login-panel" onsubmit="creerMembreAdmin(event)">
+        <label for="admin-member-name">Nom</label>
+        <input id="admin-member-name" type="text" required>
+        <label for="admin-member-username">Identifiant</label>
+        <input id="admin-member-username" type="text" pattern="[a-zA-Z0-9_]{3,20}" required>
+        <label for="admin-member-email">Email</label>
+        <input id="admin-member-email" type="email" required>
+        <label for="admin-member-password">Mot de passe</label>
+        <input id="admin-member-password" type="password" minlength="6" required>
+        <label for="admin-member-role">Role</label>
+        <select id="admin-member-role" required>
+          <option value="president">President</option>
+          <option value="tresorier">Tresorier</option>
+          <option value="secretaire">Secretaire</option>
+          <option value="verificateur">Verificateur</option>
+          <option value="membre">Membre</option>
+          <option value="observateur">Observateur</option>
+        </select>
+        <button class="btn-primary" type="submit">Ajouter un membre</button>
+      </form>
+      <button class="btn-primary" onclick="terminerInitialisation()">Terminer et acceder au dashboard</button>
+    </div>
+  `);
 }
 
 function installCotisationsPage() {
@@ -306,7 +383,7 @@ async function loginUser(event) {
         password: document.getElementById('login-password').value,
       }),
     });
-    setToken(data.token);
+    setToken(data.token, document.getElementById('remember-login').checked);
     openSessionFromToken(data.token);
   } catch (error) {
     alert(error.message || 'Connexion impossible.');
@@ -324,6 +401,7 @@ async function enregistrerProfil(event) {
         username: document.getElementById('register-username').value.trim(),
         email: document.getElementById('register-email').value.trim(),
         password: document.getElementById('register-password').value,
+        role: document.getElementById('register-observer').checked ? 'observateur' : 'membre',
       }),
     });
     setToken(data.token);
@@ -347,6 +425,7 @@ async function loadProtectedData() {
     chargerTransactions(),
     chargerMembres(),
     chargerVotes(),
+    chargerCandidatures(),
     chargerCotisations(),
     chargerSante(),
   ]);
@@ -382,6 +461,16 @@ async function chargerVotes() {
   } catch (error) {
     const page = document.getElementById('page-vote');
     if (page) page.insertAdjacentHTML('beforeend', `<p>${escapeHtml(error.message)}</p>`);
+  }
+}
+
+async function chargerCandidatures() {
+  try {
+    const data = await apiFetch('/api/candidatures');
+    candidatures = data.candidatures || [];
+    renderVotes();
+  } catch (error) {
+    candidatures = [];
   }
 }
 
@@ -473,18 +562,38 @@ function renderVotes() {
   page.querySelectorAll('.vote-card').forEach(card => card.remove());
   document.getElementById('proposal-panel')?.classList.add('hidden');
 
-  const visibleVotes = votes.filter(vote => vote.statut === 'ouvert' || vote.statut !== 'ouvert');
+  const electionVotes = votes.filter(vote => vote.type === 'election');
+  const decisionVotes = votes.filter(vote => vote.type !== 'election');
+  const electionBlocks = candidatures.map(renderCandidatureCard).join('') + electionVotes.map(renderVoteCard).join('');
+  const decisionBlocks = decisionVotes.map(renderVoteCard).join('');
 
-  if (!visibleVotes.length) {
+  if (!electionBlocks && !decisionBlocks) {
     page.insertAdjacentHTML('beforeend', '<div class="vote-card"><h3>Aucune proposition</h3><p class="vote-info">Les nouvelles propositions apparaitront ici.</p></div>');
   } else {
-    page.insertAdjacentHTML('beforeend', visibleVotes.map(renderVoteCard).join(''));
+    page.insertAdjacentHTML('beforeend', `
+      <div class="vote-card"><h3>Élections en cours</h3></div>
+      ${electionBlocks || '<div class="vote-card"><p class="vote-info">Aucune election ouverte.</p></div>'}
+      <div class="vote-card"><h3>Propositions de décision</h3></div>
+      ${decisionBlocks || '<div class="vote-card"><p class="vote-info">Aucune decision en cours.</p></div>'}
+    `);
   }
 
   document.getElementById('open-votes-count').textContent = votes.filter(vote => vote.statut === 'ouvert').length;
   document.getElementById('votes-proof-count').textContent = votes.length;
   applyPermissions();
   renderDashboard();
+}
+
+function renderCandidatureCard(vacancy) {
+  return `
+    <div class="vote-card">
+      <h3>Poste ${escapeHtml(vacancy.poste)}</h3>
+      <p class="vote-info">${(vacancy.candidats || []).length} candidature(s) deposee(s)</p>
+      <button class="btn-primary" onclick="mePorterCandidat('${escapeHtml(vacancy.poste)}')" ${currentUser && normalizeRole(currentUser.role) !== 'observateur' ? '' : 'disabled'}>
+        Me porter candidat
+      </button>
+    </div>
+  `;
 }
 
 function renderVoteCard(vote) {
@@ -508,13 +617,30 @@ function renderVoteCard(vote) {
       `}
       ${vote.statut === 'ouvert' ? `
         <div class="vote-actions">
-          <button class="btn-pour" onclick="voter(${vote.id}, 'pour')">Voter Pour</button>
-          <button class="btn-contre" onclick="voter(${vote.id}, 'contre')">Voter Contre</button>
+          ${vote.type === 'election'
+            ? renderElectionVoteButtons(vote)
+            : `<button class="btn-pour" onclick="voter(${vote.id}, 'pour')">Voter Pour</button>
+               <button class="btn-contre" onclick="voter(${vote.id}, 'contre')">Voter Contre</button>`}
         </div>
       ` : ''}
       <p class="vote-blockchain">Resultat ${closed ? 'publie' : 'en attente de cloture'}</p>
     </div>
   `;
+}
+
+function renderElectionVoteButtons(vote) {
+  const vacancy = candidatures.find(item => item.id === vote.poste_vacant_id || item.poste === vote.poste);
+  const candidates = vacancy?.candidats || [];
+
+  if (!candidates.length) {
+    return '<p class="vote-info">Aucun candidat disponible.</p>';
+  }
+
+  return candidates.map(candidate => `
+    <button class="btn-pour" onclick="voter(${vote.id}, '${candidate.id}')">
+      ${escapeHtml(candidate.nom || candidate.username)}
+    </button>
+  `).join('');
 }
 
 function renderCotisations() {
@@ -607,7 +733,10 @@ function applyPermissions() {
   if (proposalBtn) proposalBtn.disabled = !permissions.canSuggest;
 
   const addMemberBtn = document.getElementById('add-member-btn');
-  if (addMemberBtn) addMemberBtn.disabled = !permissions.canManageMembers;
+  if (addMemberBtn) {
+    addMemberBtn.disabled = !permissions.isAdmin;
+    addMemberBtn.textContent = permissions.isAdmin ? 'Créer un membre' : '+ Ajouter une personne';
+  }
 
   setVisible('manual-cotisation-form', permissions.canTransact);
 
@@ -771,7 +900,75 @@ async function attribuerRole(memberId) {
 }
 
 async function ajouterMembre() {
-  alert('Les nouveaux membres creent maintenant leur compte depuis l ecran de connexion.');
+  if (!currentUser?.permissions.isAdmin) {
+    alert('Seul l admin peut creer directement un membre.');
+    return;
+  }
+
+  showPage('setup-members');
+}
+
+async function configurerCoop(event) {
+  event.preventDefault();
+
+  try {
+    const data = await apiFetch('/api/config/init', {
+      method: 'POST',
+      body: JSON.stringify({
+        nom_coop: document.getElementById('setup-coop-name').value.trim(),
+        duree_mandat: Number(document.getElementById('setup-mandate-duration').value),
+      }),
+    });
+    document.getElementById('setup-unique-key').textContent = data.config.cle_unique;
+    document.getElementById('setup-key-panel').classList.remove('hidden');
+  } catch (error) {
+    alert(error.message || 'Configuration impossible.');
+  }
+}
+
+function copierCleUnique() {
+  const key = document.getElementById('setup-unique-key').textContent;
+  navigator.clipboard?.writeText(key);
+}
+
+async function creerMembreAdmin(event) {
+  event.preventDefault();
+
+  try {
+    await apiFetch('/api/members/create', {
+      method: 'POST',
+      body: JSON.stringify({
+        nom: document.getElementById('admin-member-name').value.trim(),
+        username: document.getElementById('admin-member-username').value.trim(),
+        email: document.getElementById('admin-member-email').value.trim(),
+        password: document.getElementById('admin-member-password').value,
+        role: document.getElementById('admin-member-role').value,
+      }),
+    });
+    event.target.reset();
+    await chargerMembres();
+    alert('Membre ajoute.');
+  } catch (error) {
+    alert(error.message || 'Creation impossible.');
+  }
+}
+
+function terminerInitialisation() {
+  showPage('dashboard');
+  loadProtectedData();
+}
+
+async function mePorterCandidat(poste) {
+  try {
+    await apiFetch('/api/candidatures', {
+      method: 'POST',
+      body: JSON.stringify({ poste }),
+    });
+    await chargerCandidatures();
+    alert('Candidature enregistree.');
+  } catch (error) {
+    alert(error.message || 'Candidature refusee.');
+  }
 }
 
 async function enregistrerCotisationManuelle(event) {
@@ -922,6 +1119,11 @@ window.suggererOperation = suggererOperation;
 window.voter = voter;
 window.attribuerRole = attribuerRole;
 window.ajouterMembre = ajouterMembre;
+window.configurerCoop = configurerCoop;
+window.copierCleUnique = copierCleUnique;
+window.creerMembreAdmin = creerMembreAdmin;
+window.terminerInitialisation = terminerInitialisation;
+window.mePorterCandidat = mePorterCandidat;
 window.enregistrerCotisationManuelle = enregistrerCotisationManuelle;
 window.initierPaiementFedapay = initierPaiementFedapay;
 window.lancerDemo = lancerDemo;

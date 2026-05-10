@@ -35,7 +35,32 @@ async function initDatabase() {
       propose_par INTEGER REFERENCES members(id),
       duree_heures INTEGER DEFAULT 72,
       expires_at TIMESTAMP,
+      type VARCHAR(20) DEFAULT 'decision',
+      poste VARCHAR(50),
+      poste_vacant_id INTEGER,
+      round INTEGER DEFAULT 1,
       created_at TIMESTAMP DEFAULT NOW()
+    );
+
+    ALTER TABLE votes ADD COLUMN IF NOT EXISTS type VARCHAR(20) DEFAULT 'decision';
+    ALTER TABLE votes ADD COLUMN IF NOT EXISTS poste VARCHAR(50);
+    ALTER TABLE votes ADD COLUMN IF NOT EXISTS poste_vacant_id INTEGER;
+    ALTER TABLE votes ADD COLUMN IF NOT EXISTS round INTEGER DEFAULT 1;
+
+    CREATE TABLE IF NOT EXISTS postes_vacants (
+      id SERIAL PRIMARY KEY,
+      poste VARCHAR(50) NOT NULL,
+      statut VARCHAR(20) DEFAULT 'vacant',
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS candidatures (
+      id SERIAL PRIMARY KEY,
+      poste VARCHAR(50) NOT NULL,
+      member_id INTEGER REFERENCES members(id),
+      statut VARCHAR(20) DEFAULT 'ouvert',
+      created_at TIMESTAMP DEFAULT NOW(),
+      expires_at TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS transactions (

@@ -21,6 +21,7 @@ const transactionService = require('./transaction');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const PORT = process.env.PORT || 3000;
 const sseClients = new Set();
+const BUREAU_POSTES = ['president', 'tresorier', 'secretaire', 'verificateur'];
 
 const mimeTypes = {
   '.html': 'text/html; charset=utf-8',
@@ -174,11 +175,23 @@ function getRequestIp(req) {
 }
 
 function normalizeRole(role) {
-  return cleanString(role).toLowerCase();
+  return cleanString(role).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
 
 function isAdminRole(role) {
   return normalizeRole(role) === 'admin';
+}
+
+function isValidUsername(username) {
+  return /^[a-zA-Z0-9_]{3,20}$/.test(username);
+}
+
+function normalizePoste(poste) {
+  const normalized = normalizeRole(poste);
+  if (normalized === 'tresoriere') return 'tresorier';
+  if (normalized === 'secretaire') return 'secretaire';
+  if (normalized === 'verificateur') return 'verificateur';
+  return normalized;
 }
 
 function hideSensitiveMember(member) {
@@ -192,6 +205,115 @@ function serializeVote(vote) {
     pour: Number(vote.pour || 0),
     contre: Number(vote.contre || 0),
   };
+}
+
+async function countActiveMembers() {
+  const result = await pool.query("SELECT COUNT(*)::int AS total FROM members WHERE statut = 'Actif'");
+  return Number(result.rows[0]?.total || 0);
+}
+
+async function getMandateExpirationDate() {
+  const result = await pool.query('SELECT valeur FROM config WHERE cle = $1', ['duree_mandat']);
+  const months = Number(result.rows[0]?.valeur || 12);
+  const expiresAt = new Date();
+  expiresAt.setMonth(expiresAt.getMonth() + months);
+  return expiresAt;
+}
+
+async function ensureVacancyForPoste(poste) {
+  const cleanPoste = normalizePoste(poste);
+  const existing = await pool.query(
+    `SELECT * FROM postes_vacants
+     WHERE poste = $1 AND statut IN ('vacant', 'candidature')
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [cleanPoste]
+  );
+
+  if (existing.rows[0]) {
+    return existing.rows[0];
+  }
+
+  const result = await pool.query(
+    `INSERT INTO postes_vacants (poste, statut)
+     VALUES ($1, $2)
+     RETURNING *`,
+    [cleanPoste, 'vacant']
+  );
+  return result.rows[0];
+}
+
+async function closeCandidaturePeriodByVacancy(vacancyId, automated = true) {
+  const vacancyResult = await pool.query('SELECT * FROM postes_vacants WHERE id = $1', [vacancyId]);
+  const vacancy = vacancyResult.rows[0];
+
+  if (!vacancy || !['vacant', 'candidature'].includes(vacancy.statut)) {
+    return null;
+  }
+
+  const candidates = await pool.query(
+    `SELECT candidatures.*, members.nom
+     FROM candidatures
+     JOIN members ON members.id = candidatures.member_id
+     WHERE candidatures.poste = $1
+       AND candidatures.statut = 'ouvert'
+       AND candidatures.expires_at <= NOW()
+     ORDER BY candidatures.created_at ASC`,
+    [vacancy.poste]
+  );
+
+  if (!candidates.rows.length) {
+    await pool.query(
+      `UPDATE postes_vacants SET created_at = NOW(), statut = 'candidature' WHERE id = $1`,
+      [vacancy.id]
+    );
+    await createNotification(`Aucune candidature pour ${vacancy.poste}. Periode relancee 72h.`, 'candidature');
+    return null;
+  }
+
+  await pool.query(
+    `UPDATE candidatures SET statut = 'fermé'
+     WHERE poste = $1 AND statut = 'ouvert'`,
+    [vacancy.poste]
+  );
+  await pool.query('UPDATE postes_vacants SET statut = $1 WHERE id = $2', ['vote', vacancy.id]);
+
+  const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000);
+  const vote = await pool.query(
+    `INSERT INTO votes (titre, budget, duree_heures, expires_at, type, poste, poste_vacant_id)
+     VALUES ($1, 0, 72, $2, 'election', $3, $4)
+     RETURNING *`,
+    [`Election ${vacancy.poste}`, expiresAt, vacancy.poste, vacancy.id]
+  );
+
+  await createNotification(`Vote d election ouvert pour ${vacancy.poste}.`, 'vote');
+  return vote.rows[0];
+}
+
+async function createMemberRecord({ nom, username, email, password, role = 'membre' }) {
+  const cleanNom = cleanString(nom);
+  const cleanUsername = cleanString(username);
+  const cleanEmail = cleanString(email).toLowerCase();
+  const cleanPassword = cleanString(password);
+  const cleanRole = normalizePoste(role) || 'membre';
+
+  if (!cleanNom || !cleanUsername || !cleanEmail || !cleanPassword) {
+    throw new HttpError(400, 'nom, username, email et password sont obligatoires.');
+  }
+
+  if (!isValidUsername(cleanUsername)) {
+    throw new HttpError(400, 'username doit contenir 3 a 20 caracteres alphanumeriques ou underscore.');
+  }
+
+  const passwordHash = await bcrypt.hash(cleanPassword, 12);
+  const result = await pool.query(
+    `INSERT INTO members (nom, username, email, password_hash, role)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING id, nom, username, email, role, role_expires_at, statut, created_at`,
+    [cleanNom, cleanUsername, cleanEmail, passwordHash, cleanRole]
+  );
+
+  return result.rows[0];
 }
 
 function serveStatic(req, res, pathname) {
@@ -231,32 +353,29 @@ function pushNotification(notification) {
 }
 
 async function register(req, res) {
-  const { nom, username, email, password } = await readBody(req);
-  const cleanNom = cleanString(nom);
-  const cleanUsername = cleanString(username);
-  const cleanEmail = cleanString(email).toLowerCase();
-  const cleanPassword = cleanString(password);
+  const { nom, username, email, password, role } = await readBody(req);
+  const requestedRole = normalizePoste(role || 'membre');
 
-  if (!cleanNom || !cleanUsername || !cleanEmail || !cleanPassword) {
-    throw new HttpError(400, 'nom, username, email et password sont obligatoires.');
+  if (!['membre', 'observateur'].includes(requestedRole)) {
+    throw new HttpError(403, 'Inscription publique limitee aux roles membre ou observateur.');
   }
 
-  if (!/^[a-zA-Z0-9_]{3,20}$/.test(cleanUsername)) {
-    throw new HttpError(400, 'username doit contenir 3 a 20 caracteres alphanumeriques ou underscore.');
-  }
-
-  const passwordHash = await bcrypt.hash(cleanPassword, 12);
-  const result = await pool.query(
-    `INSERT INTO members (nom, username, email, password_hash)
-     VALUES ($1, $2, $3, $4)
-     RETURNING id, nom, username, email, role, role_expires_at, statut, created_at`,
-    [cleanNom, cleanUsername, cleanEmail, passwordHash]
-  );
-  const member = result.rows[0];
+  const member = await createMemberRecord({ nom, username, email, password, role: requestedRole });
   const token = generateToken(member);
 
   await createNotification(`Nouveau membre inscrit: ${member.nom}`, 'membre');
   sendJson(res, 201, { token, member });
+}
+
+async function createMemberByAdmin(req, res) {
+  await requireAuth(req, res);
+  await requireRoles(req, res, 'admin');
+
+  const body = await readBody(req);
+  const member = await createMemberRecord(body);
+
+  await createNotification(`Membre cree par l admin: ${member.nom}`, 'membre');
+  sendJson(res, 201, { member });
 }
 
 async function login(req, res) {
@@ -473,11 +592,21 @@ async function listVotes(req, res) {
 
 async function createVote(req, res) {
   await requireAuth(req, res);
-  await requireRoles(req, res, 'president', 'président');
 
-  const { titre, budget, duree_heures } = await readBody(req);
+  const { titre, budget, duree_heures, type = 'decision' } = await readBody(req);
+  const voteType = cleanString(type).toLowerCase() || 'decision';
+
+  if (voteType === 'election') {
+    const activeMembers = await countActiveMembers();
+    if (activeMembers < 4) {
+      throw new HttpError(403, 'Minimum 4 membres actifs requis pour ouvrir une election.');
+    }
+  } else {
+    await requireRoles(req, res, 'president', 'président');
+  }
+
   const cleanTitle = cleanString(titre);
-  const amount = parsePositiveInteger(budget, 'budget');
+  const amount = voteType === 'election' ? Number(budget || 0) : parsePositiveInteger(budget, 'budget');
   const durationHours = Math.max(Number(duree_heures || 72), 72);
 
   if (!cleanTitle || !Number.isInteger(durationHours)) {
@@ -486,10 +615,10 @@ async function createVote(req, res) {
 
   const expiresAt = new Date(Date.now() + durationHours * 60 * 60 * 1000);
   const result = await pool.query(
-    `INSERT INTO votes (titre, budget, propose_par, duree_heures, expires_at)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO votes (titre, budget, propose_par, duree_heures, expires_at, type)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING *`,
-    [cleanTitle, amount, req.user.id, durationHours, expiresAt]
+    [cleanTitle, amount, req.user.id, durationHours, expiresAt, voteType]
   );
 
   await createNotification(`Nouvelle proposition: ${cleanTitle}`, 'vote');
@@ -503,16 +632,31 @@ async function castVote(req, res, id) {
   const { choix } = await readBody(req);
   const cleanChoice = cleanString(choix).toLowerCase();
 
-  if (!['pour', 'contre'].includes(cleanChoice)) {
-    throw new HttpError(400, 'choix doit etre pour ou contre.');
-  }
-
   const vote = await pool.query('SELECT * FROM votes WHERE id = $1', [id]);
   if (!vote.rows[0] || vote.rows[0].statut !== 'ouvert') {
     throw new HttpError(400, 'Vote introuvable ou ferme.');
   }
 
-  if (vote.rows[0].expires_at && new Date(vote.rows[0].expires_at).getTime() <= Date.now()) {
+  const currentVote = vote.rows[0];
+  const isElection = currentVote.type === 'election';
+
+  if (!isElection && !['pour', 'contre'].includes(cleanChoice)) {
+    throw new HttpError(400, 'choix doit etre pour ou contre.');
+  }
+
+  if (isElection) {
+    const candidate = await pool.query(
+      `SELECT id FROM candidatures
+       WHERE id = $1 AND poste = $2 AND statut IN ('fermé', 'ferme')`,
+      [Number(cleanChoice), currentVote.poste]
+    );
+
+    if (candidate.rowCount === 0) {
+      throw new HttpError(400, 'Candidat invalide pour cette election.');
+    }
+  }
+
+  if (currentVote.expires_at && new Date(currentVote.expires_at).getTime() <= Date.now()) {
     throw new HttpError(400, 'Ce vote est expire.');
   }
 
@@ -527,7 +671,7 @@ async function castVote(req, res, id) {
       `UPDATE votes
        SET pour = pour + $1, contre = contre + $2
        WHERE id = $3`,
-      [cleanChoice === 'pour' ? 1 : 0, cleanChoice === 'contre' ? 1 : 0, id]
+      [!isElection && cleanChoice === 'pour' ? 1 : 0, !isElection && cleanChoice === 'contre' ? 1 : 0, id]
     );
     await client.query('COMMIT');
   } catch (err) {
@@ -545,7 +689,9 @@ async function castVote(req, res, id) {
 }
 
 async function closeVote(req, res, id) {
-  await requireAuth(req, res);
+  if (!req.user) {
+    await requireAuth(req, res);
+  }
 
   const result = await pool.query('SELECT * FROM votes WHERE id = $1', [id]);
   const vote = result.rows[0];
@@ -560,6 +706,70 @@ async function closeVote(req, res, id) {
 
   if (vote.expires_at && new Date(vote.expires_at).getTime() > Date.now()) {
     throw new HttpError(400, 'Ce vote n est pas encore expire.');
+  }
+
+  if (vote.type === 'election') {
+    const tally = await pool.query(
+      `SELECT choix, COUNT(*)::int AS voix
+       FROM vote_results
+       WHERE vote_id = $1
+       GROUP BY choix
+       ORDER BY voix DESC`,
+      [id]
+    );
+
+    const topScore = Number(tally.rows[0]?.voix || 0);
+    const winners = tally.rows.filter(row => Number(row.voix) === topScore);
+
+    if (!topScore || winners.length > 1) {
+      if (Number(vote.round || 1) < 2) {
+        const updated = await pool.query(
+          `UPDATE votes
+           SET round = round + 1, expires_at = $1
+           WHERE id = $2
+           RETURNING *`,
+          [new Date(Date.now() + 48 * 60 * 60 * 1000), id]
+        );
+        await createNotification(`Egalite sur l election ${vote.poste}. Vote reconduit 48h.`, 'vote');
+        sendJson(res, 200, { vote: serializeVote(updated.rows[0]) });
+        return;
+      }
+
+      const rejected = await pool.query(
+        `UPDATE votes SET statut = 'rejeté' WHERE id = $1 RETURNING *`,
+        [id]
+      );
+      await createNotification(`Election ${vote.poste} rejetee apres deux egalites.`, 'vote');
+      sendJson(res, 200, { vote: serializeVote(rejected.rows[0]) });
+      return;
+    }
+
+    const winnerCandidature = await pool.query(
+      `SELECT candidatures.*, members.nom
+       FROM candidatures
+       JOIN members ON members.id = candidatures.member_id
+       WHERE candidatures.id = $1`,
+      [Number(winners[0].choix)]
+    );
+    const candidature = winnerCandidature.rows[0];
+
+    if (!candidature) {
+      throw new HttpError(400, 'Candidature gagnante introuvable.');
+    }
+
+    const expiresAt = await getMandateExpirationDate();
+    await pool.query(
+      `UPDATE members
+       SET role = $1, role_expires_at = $2
+       WHERE id = $3`,
+      [vote.poste, expiresAt, candidature.member_id]
+    );
+    await pool.query('UPDATE postes_vacants SET statut = $1 WHERE id = $2', ['pourvu', vote.poste_vacant_id]);
+    await pool.query('UPDATE votes SET statut = $1 WHERE id = $2', ['validé', id]);
+
+    await createNotification(`${candidature.nom} obtient le poste ${vote.poste}.`, 'membre');
+    sendJson(res, 200, { winner: candidature.member_id, poste: vote.poste });
+    return;
   }
 
   let status = 'rejeté';
@@ -612,6 +822,79 @@ async function createCotisation(req, res) {
 
   await createNotification('Cotisation enregistree.', 'cotisation');
   sendJson(res, 201, { cotisation: result.rows[0] });
+}
+
+async function listCandidatures(req, res) {
+  await requireAuth(req, res);
+
+  const vacancies = await pool.query(`
+    SELECT postes_vacants.*,
+      COALESCE(json_agg(
+        json_build_object('id', candidatures.id, 'member_id', candidatures.member_id, 'nom', members.nom, 'username', members.username)
+      ) FILTER (WHERE candidatures.id IS NOT NULL), '[]') AS candidats
+    FROM postes_vacants
+    LEFT JOIN candidatures ON candidatures.poste = postes_vacants.poste
+      AND candidatures.statut IN ('ouvert', 'fermé', 'ferme')
+    LEFT JOIN members ON members.id = candidatures.member_id
+    WHERE postes_vacants.statut IN ('vacant', 'candidature', 'vote')
+    GROUP BY postes_vacants.id
+    ORDER BY postes_vacants.created_at DESC
+  `);
+
+  sendJson(res, 200, { candidatures: vacancies.rows });
+}
+
+async function createCandidature(req, res) {
+  await requireAuth(req, res);
+
+  const activeMembers = await countActiveMembers();
+  if (activeMembers < 4) {
+    throw new HttpError(403, 'Minimum 4 membres actifs requis pour ouvrir une election.');
+  }
+
+  const member = await pool.query("SELECT id, statut FROM members WHERE id = $1 AND statut = 'Actif'", [req.user.id]);
+  if (member.rowCount === 0) {
+    throw new HttpError(403, 'Seul un membre actif peut se porter candidat.');
+  }
+
+  const { poste } = await readBody(req);
+  const cleanPoste = normalizePoste(poste);
+
+  if (!BUREAU_POSTES.includes(cleanPoste)) {
+    throw new HttpError(400, 'Poste invalide.');
+  }
+
+  const existing = await pool.query(
+    `SELECT 1 FROM candidatures
+     WHERE member_id = $1 AND statut = 'ouvert' AND expires_at > NOW()
+     LIMIT 1`,
+    [req.user.id]
+  );
+  if (existing.rowCount > 0) {
+    throw new HttpError(409, 'Vous avez deja une candidature ouverte.');
+  }
+
+  const vacancy = await ensureVacancyForPoste(cleanPoste);
+  if (vacancy.statut === 'vacant') {
+    await pool.query('UPDATE postes_vacants SET statut = $1, created_at = NOW() WHERE id = $2', ['candidature', vacancy.id]);
+    vacancy.created_at = new Date();
+  }
+  const expiresAt = new Date(new Date(vacancy.created_at).getTime() + 72 * 60 * 60 * 1000);
+  const result = await pool.query(
+    `INSERT INTO candidatures (poste, member_id, expires_at)
+     VALUES ($1, $2, $3)
+     RETURNING *`,
+    [cleanPoste, req.user.id, expiresAt]
+  );
+
+  await createNotification(`Nouvelle candidature pour le poste ${cleanPoste}.`, 'candidature');
+  sendJson(res, 201, { candidature: result.rows[0] });
+}
+
+async function closeCandidaturePeriod(req, res, id) {
+  await requireAuth(req, res);
+  await closeCandidaturePeriodByVacancy(Number(id), false);
+  sendJson(res, 200, { success: true });
 }
 
 async function fedapayWebhook(req, res) {
@@ -820,6 +1103,67 @@ async function healthScore(req, res) {
   });
 }
 
+async function verifierElectionsAutomatiques() {
+  const activeMembers = await countActiveMembers();
+
+  for (const poste of BUREAU_POSTES) {
+    const holder = await pool.query(
+      `SELECT id FROM members
+       WHERE statut = 'Actif'
+         AND translate(lower(role), 'éèêëàâäîïôöùûüç', 'eeeeaaaiioouuuc') = ANY($1)
+         AND (role_expires_at IS NULL OR role_expires_at > NOW())
+       LIMIT 1`,
+      [poste === 'tresorier' ? ['tresorier', 'tresoriere'] : [poste]]
+    );
+
+    if (holder.rowCount === 0) {
+      const vacancy = await ensureVacancyForPoste(poste);
+
+      if (activeMembers < 4) {
+        await createNotification('Minimum 4 membres actifs requis pour ouvrir une élection', 'election');
+        continue;
+      }
+
+      if (vacancy.statut === 'vacant') {
+        await pool.query('UPDATE postes_vacants SET statut = $1, created_at = NOW() WHERE id = $2', ['candidature', vacancy.id]);
+        await createNotification(`Periode de candidature ouverte 72h pour ${poste}.`, 'candidature');
+      }
+    }
+  }
+
+  const expiredVacancies = await pool.query(
+    `SELECT id FROM postes_vacants
+     WHERE statut = 'candidature'
+       AND created_at <= NOW() - INTERVAL '72 hours'`
+  );
+
+  for (const vacancy of expiredVacancies.rows) {
+    await closeCandidaturePeriodByVacancy(vacancy.id);
+  }
+
+  const expiredElectionVotes = await pool.query(
+    `SELECT id FROM votes
+     WHERE type = 'election'
+       AND statut = 'ouvert'
+       AND expires_at <= NOW()`
+  );
+
+  for (const vote of expiredElectionVotes.rows) {
+    const fakeReq = { headers: {}, user: { id: 0, role: 'admin' } };
+    const fakeRes = { writableEnded: false };
+    fakeRes.writeHead = () => {};
+    fakeRes.end = () => { fakeRes.writableEnded = true; };
+    await closeVote(fakeReq, fakeRes, vote.id);
+  }
+}
+
+function planifierElectionsAutomatiques() {
+  verifierElectionsAutomatiques().catch(err => console.error('Erreur verification elections:', err));
+  return setInterval(() => {
+    verifierElectionsAutomatiques().catch(err => console.error('Erreur verification elections:', err));
+  }, 60 * 60 * 1000);
+}
+
 async function routeApi(req, res, pathname) {
   if (req.method === 'POST' && pathname === '/api/auth/register') return register(req, res);
   if (req.method === 'POST' && pathname === '/api/auth/login') return login(req, res);
@@ -828,6 +1172,7 @@ async function routeApi(req, res, pathname) {
   if (req.method === 'GET' && pathname === '/api/config') return getPublicConfig(req, res);
 
   if (req.method === 'GET' && pathname === '/api/members') return listMembers(req, res);
+  if (req.method === 'POST' && pathname === '/api/members/create') return createMemberByAdmin(req, res);
 
   const memberRoleMatch = pathname.match(/^\/api\/members\/(\d+)\/role$/);
   if (req.method === 'PUT' && memberRoleMatch) return updateMemberRole(req, res, Number(memberRoleMatch[1]));
@@ -842,6 +1187,14 @@ async function routeApi(req, res, pathname) {
 
   if (req.method === 'GET' && pathname === '/api/votes') return listVotes(req, res);
   if (req.method === 'POST' && pathname === '/api/votes') return createVote(req, res);
+
+  if (req.method === 'GET' && pathname === '/api/candidatures') return listCandidatures(req, res);
+  if (req.method === 'POST' && pathname === '/api/candidatures') return createCandidature(req, res);
+
+  const candidatureCloseMatch = pathname.match(/^\/api\/candidatures\/(\d+)\/close$/);
+  if (req.method === 'POST' && candidatureCloseMatch) {
+    return closeCandidaturePeriod(req, res, Number(candidatureCloseMatch[1]));
+  }
 
   const voteActionMatch = pathname.match(/^\/api\/votes\/(\d+)\/(vote|close)$/);
   if (voteActionMatch && req.method === 'POST') {
@@ -892,3 +1245,5 @@ httpServer.listen(PORT, () => {
   console.log(`CoopLedger en ligne sur le port ${PORT}`);
   console.log(`Dashboard : http://localhost:${PORT}`);
 });
+
+planifierElectionsAutomatiques();
