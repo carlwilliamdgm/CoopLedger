@@ -231,21 +231,26 @@ function pushNotification(notification) {
 }
 
 async function register(req, res) {
-  const { nom, email, password } = await readBody(req);
+  const { nom, username, email, password } = await readBody(req);
   const cleanNom = cleanString(nom);
+  const cleanUsername = cleanString(username);
   const cleanEmail = cleanString(email).toLowerCase();
   const cleanPassword = cleanString(password);
 
-  if (!cleanNom || !cleanEmail || !cleanPassword) {
-    throw new HttpError(400, 'nom, email et password sont obligatoires.');
+  if (!cleanNom || !cleanUsername || !cleanEmail || !cleanPassword) {
+    throw new HttpError(400, 'nom, username, email et password sont obligatoires.');
+  }
+
+  if (!/^[a-zA-Z0-9_]{3,20}$/.test(cleanUsername)) {
+    throw new HttpError(400, 'username doit contenir 3 a 20 caracteres alphanumeriques ou underscore.');
   }
 
   const passwordHash = await bcrypt.hash(cleanPassword, 12);
   const result = await pool.query(
-    `INSERT INTO members (nom, email, password_hash)
-     VALUES ($1, $2, $3)
-     RETURNING id, nom, email, role, role_expires_at, statut, created_at`,
-    [cleanNom, cleanEmail, passwordHash]
+    `INSERT INTO members (nom, username, email, password_hash)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id, nom, username, email, role, role_expires_at, statut, created_at`,
+    [cleanNom, cleanUsername, cleanEmail, passwordHash]
   );
   const member = result.rows[0];
   const token = generateToken(member);
@@ -255,31 +260,32 @@ async function register(req, res) {
 }
 
 async function login(req, res) {
-  const { email, password } = await readBody(req);
-  const cleanEmail = cleanString(email).toLowerCase();
+  const { username, password } = await readBody(req);
+  const cleanUsername = cleanString(username);
+  const cleanLogin = cleanUsername.toLowerCase();
   const cleanPassword = cleanString(password);
 
-  if (!cleanEmail || !cleanPassword) {
-    throw new HttpError(400, 'email et password sont obligatoires.');
+  if (!cleanUsername || !cleanPassword) {
+    throw new HttpError(400, 'username et password sont obligatoires.');
   }
 
   const adminEmail = cleanString(process.env.ADMIN_EMAIL).toLowerCase();
-  if (adminEmail && cleanEmail === adminEmail) {
-    if (isAdminBlocked(cleanEmail)) {
+  if (adminEmail && cleanLogin === adminEmail) {
+    if (isAdminBlocked(cleanLogin)) {
       throw new HttpError(403, 'Compte admin bloque apres 3 tentatives echouees.');
     }
 
     if (cleanPassword !== process.env.ADMIN_PASSWORD) {
-      recordFailedAdminLogin(cleanEmail);
+      recordFailedAdminLogin(cleanLogin);
       throw new HttpError(401, 'Identifiants invalides.');
     }
 
-    resetAdminFailedAttempts(cleanEmail);
+    resetAdminFailedAttempts(cleanLogin);
 
     const admin = {
       id: 0,
       nom: 'Admin',
-      email: cleanEmail,
+      email: cleanLogin,
       role: 'admin',
       role_expires_at: null,
     };
@@ -288,11 +294,11 @@ async function login(req, res) {
     return;
   }
 
-  const result = await pool.query('SELECT * FROM members WHERE email = $1', [cleanEmail]);
+  const result = await pool.query('SELECT * FROM members WHERE username = $1', [cleanUsername]);
   const member = result.rows[0];
   const isAdmin = member && isAdminRole(member.role);
 
-  if (isAdmin && isAdminBlocked(cleanEmail)) {
+  if (isAdmin && isAdminBlocked(cleanUsername)) {
     throw new HttpError(403, 'Compte admin bloque apres 3 tentatives echouees.');
   }
 
@@ -302,14 +308,14 @@ async function login(req, res) {
 
   if (!member || !passwordOk) {
     if (isAdmin) {
-      recordFailedAdminLogin(cleanEmail);
+      recordFailedAdminLogin(cleanUsername);
     }
 
     throw new HttpError(401, 'Identifiants invalides.');
   }
 
   if (isAdmin) {
-    resetAdminFailedAttempts(cleanEmail);
+    resetAdminFailedAttempts(cleanUsername);
   }
 
   const safeMember = hideSensitiveMember(member);
@@ -380,7 +386,7 @@ async function getPublicConfig(req, res) {
 async function listMembers(req, res) {
   await requireAuth(req, res);
   const result = await pool.query(
-    `SELECT id, nom, email, role, role_expires_at, statut, created_at
+    `SELECT id, nom, username, email, role, role_expires_at, statut, created_at
      FROM members
      ORDER BY created_at DESC`
   );
@@ -408,7 +414,7 @@ async function updateMemberRole(req, res, id) {
     `UPDATE members
      SET role = $1, role_expires_at = $2
      WHERE id = $3
-     RETURNING id, nom, email, role, role_expires_at, statut, created_at`,
+     RETURNING id, nom, username, email, role, role_expires_at, statut, created_at`,
     [cleanRole, role_expires_at || null, id]
   );
 

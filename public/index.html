@@ -22,49 +22,35 @@
 
       <div class="auth-grid">
         <div class="auth-panel">
-          <p class="panel-label">Profils de démonstration</p>
+          <p class="panel-label">Connexion</p>
           <div id="existing-profiles">
-            <button class="profile-login" onclick="loginDemoProfile('president')">
-              <strong>Kofi AGBEKO</strong>
-              <span>Président</span>
-            </button>
-            <button class="profile-login" onclick="loginDemoProfile('tresoriere')">
-              <strong>Ama TCHAMDJA</strong>
-              <span>Trésorière</span>
-            </button>
-            <button class="profile-login" onclick="loginDemoProfile('secretaire')">
-              <strong>Koffi BOUKPESSI</strong>
-              <span>Secrétaire</span>
-            </button>
-            <button class="profile-login" onclick="loginDemoProfile('membre')">
-              <strong>Abla GNASSINGBE</strong>
-              <span>Membre</span>
-            </button>
-            <button class="profile-login" onclick="loginDemoProfile('observateur')">
-              <strong>Partenaire externe</strong>
-              <span>Observateur</span>
-            </button>
+            <form id="login-form" class="login-form">
+              <label for="login-username">Identifiant</label>
+              <input id="login-username" type="text" placeholder="komi_adjoka" autocomplete="username" required>
+
+              <label for="login-password">Mot de passe</label>
+              <input id="login-password" type="password" autocomplete="current-password" required>
+
+              <button class="btn-primary" type="submit">Se connecter</button>
+            </form>
           </div>
         </div>
 
         <form class="auth-panel" onsubmit="enregistrerProfil(event)">
-          <p class="panel-label">Nouvel accès</p>
+          <p class="panel-label">Nouvel accès membre</p>
           <label for="register-name">Nom complet</label>
           <input id="register-name" type="text" placeholder="Ex. Komi ADJOKA" required>
 
-          <label for="register-role">Rôle dans la coopérative</label>
-          <select id="register-role" required>
-            <option value="Membre">Membre</option>
-            <option value="Observateur">Observateur</option>
-            <option value="Secretaire">Secrétaire</option>
-            <option value="Tresoriere">Trésorière</option>
-            <option value="President">Président</option>
-          </select>
+          <label for="register-username">Identifiant</label>
+          <input id="register-username" type="text" placeholder="komi_adjoka" pattern="[a-zA-Z0-9_]{3,20}" minlength="3" maxlength="20" autocomplete="username" required>
 
-          <label for="register-cotisations">Cotisations versées</label>
-          <input id="register-cotisations" type="number" min="0" step="1000" value="0">
+          <label for="register-email">Email</label>
+          <input id="register-email" type="email" placeholder="komi@coop.test" required>
 
-          <button class="btn-primary" type="submit">Créer le profil et entrer</button>
+          <label for="register-password">Mot de passe</label>
+          <input id="register-password" type="password" minlength="6" autocomplete="new-password" required>
+
+          <button class="btn-primary" type="submit">Créer le compte et entrer</button>
         </form>
       </div>
     </div>

@@ -193,10 +193,10 @@ function renderAuthForms() {
   if (container) {
     container.innerHTML = `
       <form id="login-form" class="login-form">
-        <label for="login-email">Email</label>
-        <input id="login-email" type="email" placeholder="membre@coop.test" required>
+        <label for="login-username">Identifiant</label>
+        <input id="login-username" type="text" placeholder="komi_adjoka" autocomplete="username" required>
         <label for="login-password">Mot de passe</label>
-        <input id="login-password" type="password" required>
+        <input id="login-password" type="password" autocomplete="current-password" required>
         <button class="btn-primary" type="submit">Se connecter</button>
       </form>
     `;
@@ -208,10 +208,12 @@ function renderAuthForms() {
       <p class="panel-label">Nouvel acces membre</p>
       <label for="register-name">Nom complet</label>
       <input id="register-name" type="text" placeholder="Ex. Komi ADJOKA" required>
+      <label for="register-username">Identifiant</label>
+      <input id="register-username" type="text" placeholder="komi_adjoka" pattern="[a-zA-Z0-9_]{3,20}" minlength="3" maxlength="20" autocomplete="username" required>
       <label for="register-email">Email</label>
       <input id="register-email" type="email" placeholder="komi@coop.test" required>
       <label for="register-password">Mot de passe</label>
-      <input id="register-password" type="password" minlength="6" required>
+      <input id="register-password" type="password" minlength="6" autocomplete="new-password" required>
       <button class="btn-primary" type="submit">Creer le compte et entrer</button>
     `;
     registerForm.onsubmit = enregistrerProfil;
@@ -300,7 +302,7 @@ async function loginUser(event) {
     const data = await apiFetch('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify({
-        email: document.getElementById('login-email').value.trim(),
+        username: document.getElementById('login-username').value.trim(),
         password: document.getElementById('login-password').value,
       }),
     });
@@ -319,11 +321,13 @@ async function enregistrerProfil(event) {
       method: 'POST',
       body: JSON.stringify({
         nom: document.getElementById('register-name').value.trim(),
+        username: document.getElementById('register-username').value.trim(),
         email: document.getElementById('register-email').value.trim(),
         password: document.getElementById('register-password').value,
       }),
     });
     setToken(data.token);
+    alert(`Votre identifiant de connexion : @${data.member.username}`);
     event.target.reset();
     openSessionFromToken(data.token);
   } catch (error) {

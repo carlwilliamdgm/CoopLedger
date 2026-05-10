@@ -14,6 +14,7 @@ async function initDatabase() {
     CREATE TABLE IF NOT EXISTS members (
       id SERIAL PRIMARY KEY,
       nom VARCHAR(100) NOT NULL,
+      username VARCHAR(50) UNIQUE,
       email VARCHAR(150) UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
       role VARCHAR(50) DEFAULT 'membre',
@@ -21,6 +22,8 @@ async function initDatabase() {
       statut VARCHAR(20) DEFAULT 'Actif',
       created_at TIMESTAMP DEFAULT NOW()
     );
+
+    ALTER TABLE members ADD COLUMN IF NOT EXISTS username VARCHAR(50) UNIQUE;
 
     CREATE TABLE IF NOT EXISTS votes (
       id SERIAL PRIMARY KEY,
