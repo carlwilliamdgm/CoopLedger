@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CoopLedger — Coopérative Agri-Kara de Broukou</title>
+  <title>CoopLedger</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="stylesheet" href="css/style.css">
   <script src="https://cdn.fedapay.com/checkout.js?v=1.1.7"></script>
@@ -76,9 +76,9 @@
       <div class="login-panel">
         <label>Session active</label>
         <div class="profile-card">
-          <strong id="profile-name">Kofi AGBEKO</strong>
-          <span id="profile-role">President</span>
-          <p id="profile-description">Peut proposer une operation soumise au vote et gerer la cooperative.</p>
+          <strong id="profile-name">-</strong>
+          <span id="profile-role">-</span>
+          <p id="profile-description">-</p>
         </div>
         <button class="logout-button" onclick="deconnecter()">Changer de profil</button>
       </div>
@@ -90,9 +90,9 @@
       </nav>
       <button class="demo-button" onclick="lancerDemo()">Lancer la demo</button>
       <div class="sidebar-footer">
-        <p>Coopérative Agri-Kara</p>
-        <p>de Broukou</p>
-        <p id="sidebar-members-count">5 personnes</p>
+        <p id="sidebar-coop-name">-</p>
+        <p id="sidebar-coop-location"></p>
+        <p id="sidebar-members-count">-</p>
       </div>
     </div>
 
@@ -231,7 +231,6 @@
           <table>
             <thead>
               <tr>
-                <th>ID</th>
                 <th>Nom</th>
                 <th>Rôle</th>
                 <th>Cotisations</th>

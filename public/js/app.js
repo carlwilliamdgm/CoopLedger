@@ -9,6 +9,8 @@ let financialHealth = null;
 let coopConfig = null;
 let sseAbortController = null;
 let sseReconnectTimer = null;
+let fedapayPublicKey = null;
+let initialSetupKey = null;
 
 const TOKEN_KEY = 'token';
 const PENDING_TRANSACTIONS_KEY = 'pendingTransactions';
@@ -196,6 +198,21 @@ function showPage(pageId, navTarget) {
 
   const activeNav = navTarget || document.querySelector(`.nav-item[data-page="${pageId}"]`) || document.querySelector(`.nav-item[onclick*="${pageId}"]`);
   if (activeNav) activeNav.classList.add('active');
+
+  onPageShown(pageId);
+}
+
+function onPageShown(pageId) {
+  if (pageId === 'setup-members') {
+    chargerMembres().then(renderSetupMembersList).catch(() => {});
+    const inlinePanel = document.getElementById('setup-key-inline');
+    const inlineKey = document.getElementById('setup-unique-key-inline');
+    if (inlineKey && initialSetupKey) inlineKey.textContent = initialSetupKey;
+    if (inlinePanel) inlinePanel.classList.toggle('hidden', !initialSetupKey);
+  }
+  if (pageId === 'notifications') {
+    chargerNotificationsHistorique();
+  }
 }
 
 function installDynamicInterface() {
@@ -204,7 +221,29 @@ function installDynamicInterface() {
   installCotisationsPage();
   installNotificationsPage();
   installStartupPages();
+  installTransactionForm();
   markDashboardNodes();
+}
+
+function installTransactionForm() {
+  const page = document.getElementById('page-transactions');
+  if (!page || document.getElementById('transaction-form')) return;
+
+  const header = page.querySelector('.page-header');
+  if (!header) return;
+
+  header.insertAdjacentHTML('afterend', `
+    <form id="transaction-form" class="login-panel hidden" onsubmit="soumettreTransaction(event)">
+      <p class="panel-label">Nouvelle transaction</p>
+      <label for="transaction-libelle">Libellé</label>
+      <input id="transaction-libelle" type="text" required>
+      <label for="transaction-montant">Montant (FCFA)</label>
+      <input id="transaction-montant" type="number" required>
+      <label for="transaction-vote-select">Vote validé associé</label>
+      <select id="transaction-vote-select" required></select>
+      <button class="btn-primary" type="submit">Enregistrer</button>
+    </form>
+  `);
 }
 
 function renderAuthForms() {
@@ -291,7 +330,19 @@ function installStartupPages() {
     </div>
     <div id="page-setup-members" class="page">
       <h1>Constituer le bureau initial</h1>
-      <form class="login-panel" onsubmit="creerMembreAdmin(event)">
+      <div id="setup-key-inline" class="receipt-panel hidden">
+        <p class="panel-label">Clé unique (une seule fois)</p>
+        <code id="setup-unique-key-inline">-</code>
+        <button class="btn-secondary" type="button" onclick="copierCleUnique()">Copier</button>
+      </div>
+      <div id="setup-members-existing" class="login-panel">
+        <p class="panel-label">Membres déjà inscrits</p>
+        <div id="setup-members-list">
+          <p>Chargement...</p>
+        </div>
+      </div>
+      <form id="setup-create-member-form" class="login-panel" onsubmit="creerMembreAdmin(event)">
+        <p class="panel-label">Créer un nouveau profil (si nécessaire)</p>
         <label for="admin-member-name">Nom</label>
         <input id="admin-member-name" type="text" required>
         <label for="admin-member-username">Identifiant</label>
@@ -300,18 +351,9 @@ function installStartupPages() {
         <input id="admin-member-email" type="email" required>
         <label for="admin-member-password">Mot de passe</label>
         <input id="admin-member-password" type="password" minlength="6" required>
-        <label for="admin-member-role">Role</label>
-        <select id="admin-member-role" required>
-          <option value="president">President</option>
-          <option value="tresorier">Tresorier</option>
-          <option value="secretaire">Secretaire</option>
-          <option value="verificateur">Verificateur</option>
-          <option value="membre">Membre</option>
-          <option value="observateur">Observateur</option>
-        </select>
-        <button class="btn-primary" type="submit">Ajouter un membre</button>
+        <button class="btn-primary" type="submit">Créer le profil</button>
       </form>
-      <button class="btn-primary" onclick="terminerInitialisation()">Terminer et acceder au dashboard</button>
+      <button class="btn-primary" onclick="terminerInitialisation()">Terminer</button>
     </div>
   `);
 }
@@ -331,8 +373,8 @@ function installCotisationsPage() {
         </div>
       </div>
       <form id="manual-cotisation-form" class="login-panel hidden" onsubmit="enregistrerCotisationManuelle(event)">
-        <label for="cotisation-member-id">ID membre</label>
-        <input id="cotisation-member-id" type="number" min="1" required>
+        <label for="cotisation-member-select">Membre</label>
+        <select id="cotisation-member-select" required></select>
         <label for="cotisation-montant">Montant</label>
         <input id="cotisation-montant" type="number" min="1" required>
         <label for="cotisation-mode">Mode</label>
@@ -433,6 +475,7 @@ async function loadProtectedData() {
     chargerVotes(),
     chargerCandidatures(),
     chargerCotisations(),
+    chargerNotificationsHistorique(),
     chargerSante(),
   ]);
   renderDashboard();
@@ -441,14 +484,77 @@ async function loadProtectedData() {
   flushPendingTransactions();
 }
 
+async function chargerNotificationsHistorique() {
+  try {
+    const data = await apiFetch('/api/notifications');
+    notifications = data.notifications || [];
+    renderNotifications();
+  } catch (error) {
+    // ignore
+  }
+}
+
+function renderSetupMembersList() {
+  const container = document.getElementById('setup-members-list');
+  if (!container) return;
+
+  if (!members.length) {
+    container.innerHTML = '<p>Aucun membre inscrit pour le moment. Créez un premier profil ci-dessous.</p>';
+    return;
+  }
+
+  const roleOptions = ['president', 'tresorier', 'secretaire', 'verificateur', 'membre', 'observateur'];
+  container.innerHTML = `
+    <table style="width:100%; border-collapse:collapse;">
+      <thead>
+        <tr><th style="text-align:left; padding:6px 0;">Nom</th><th style="text-align:left; padding:6px 0;">Rôle</th><th style="text-align:left; padding:6px 0;">Action</th></tr>
+      </thead>
+      <tbody>
+        ${members.map(member => `
+          <tr>
+            <td style="padding:6px 0;">${escapeHtml(member.nom)}</td>
+            <td style="padding:6px 0;">
+              <select id="setup-role-${member.id}">
+                ${roleOptions.map(role => `<option value="${role}" ${normalizeRole(member.role)===role?'selected':''}>${role}</option>`).join('')}
+              </select>
+            </td>
+            <td style="padding:6px 0;">
+              <button class="status-button" onclick="attribuerRoleDepuisSetup('${member.id}')">Attribuer</button>
+            </td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+async function attribuerRoleDepuisSetup(memberId) {
+  if (!currentUser?.permissions.isAdmin) return;
+  try {
+    const role = document.getElementById(`setup-role-${memberId}`)?.value;
+    await apiFetch(`/api/members/${memberId}/role`, {
+      method: 'PUT',
+      body: JSON.stringify({ role, duree_mandat_mois: Number(document.getElementById('setup-mandate-duration')?.value || 12) }),
+    });
+    await chargerMembres();
+    renderSetupMembersList();
+  } catch (error) {
+    alert(error.message || 'Attribution impossible.');
+  }
+}
+
 async function chargerConfig() {
   try {
     const data = await apiFetch('/api/config');
     coopConfig = data;
     document.getElementById('members-title').textContent = `Membres — ${data.nom_coop || 'Coop'}`;
+    const sidebarName = document.getElementById('sidebar-coop-name');
+    if (sidebarName) sidebarName.textContent = data.nom_coop || 'CoopLedger';
   } catch (error) {
-    coopConfig = { nom_coop: 'CoopLedger' };
+    coopConfig = { nom_coop: null };
     document.getElementById('members-title').textContent = 'Membres';
+    const sidebarName = document.getElementById('sidebar-coop-name');
+    if (sidebarName) sidebarName.textContent = 'CoopLedger';
   }
 }
 
@@ -467,9 +573,19 @@ async function chargerMembres() {
     const data = await apiFetch('/api/members');
     members = data.members || [];
     renderMembers();
+    renderCotisationMemberOptions();
   } catch (error) {
-    renderTableError('members-list', 6, error.message);
+    renderTableError('members-list', 5, error.message);
   }
+}
+
+function renderCotisationMemberOptions() {
+  const select = document.getElementById('cotisation-member-select');
+  if (!select) return;
+  const sorted = [...members].sort((a, b) => String(a.nom).localeCompare(String(b.nom), 'fr'));
+  select.innerHTML = sorted.length
+    ? sorted.map(member => `<option value="${member.id}">${escapeHtml(member.nom)} (${escapeHtml(member.username)})</option>`).join('')
+    : '<option value="">Aucun membre</option>';
 }
 
 async function chargerVotes() {
@@ -478,10 +594,21 @@ async function chargerVotes() {
     votes = data.votes || [];
     renderVotes();
     renderVotesInDashboard();
+    renderTransactionVoteOptions();
   } catch (error) {
     const page = document.getElementById('page-vote');
     if (page) page.insertAdjacentHTML('beforeend', `<p>${escapeHtml(error.message)}</p>`);
   }
+}
+
+function renderTransactionVoteOptions() {
+  const select = document.getElementById('transaction-vote-select');
+  if (!select) return;
+
+  const validated = votes.filter(vote => vote.statut === 'validé');
+  select.innerHTML = validated.length
+    ? validated.map(vote => `<option value="${vote.id}">${escapeHtml(vote.titre)} · ${formatDateTime(vote.expires_at)}</option>`).join('')
+    : '<option value="">Aucun vote validé</option>';
 }
 
 async function chargerCandidatures() {
@@ -565,22 +692,54 @@ function renderMembers() {
   if (!tbody) return;
 
   if (!members.length) {
-    tbody.innerHTML = '<tr><td colspan="6">Aucun membre enregistre.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5">Aucun membre enregistre.</td></tr>';
   } else {
-    tbody.innerHTML = members.map(member => `
-      <tr>
-        <td>${member.id}</td>
-        <td>${escapeHtml(member.nom)}</td>
-        <td>${escapeHtml(member.role)}</td>
-        <td>-</td>
-        <td><span class="${member.statut === 'Actif' ? 'badge-actif' : 'badge-inactif'}">${escapeHtml(member.statut)}</span></td>
-        <td>
-          <button class="status-button" onclick="attribuerRole('${member.id}')" ${currentUser?.permissions.canManageMembers ? '' : 'disabled'}>
-            Attribuer role
-          </button>
-        </td>
-      </tr>
-    `).join('');
+    tbody.innerHTML = members.map(member => {
+      const canManage = Boolean(currentUser?.permissions.canManageMembers);
+      const isAdmin = Boolean(currentUser?.permissions.isAdmin);
+      const roleValue = normalizeRole(member.role || 'membre');
+      const mandateValue = isAdmin ? 12 : '';
+      const validatedVotes = votes.filter(v => v.statut === 'validé');
+      const voteOptions = validatedVotes.length
+        ? validatedVotes.map(v => `<option value="${v.id}">${escapeHtml(v.titre)} · ${formatDateTime(v.expires_at)}</option>`).join('')
+        : '<option value="">Aucun vote validé</option>';
+
+      return `
+        <tr>
+          <td>${escapeHtml(member.nom)}</td>
+          <td>${escapeHtml(member.role)}</td>
+          <td>-</td>
+          <td><span class="${member.statut === 'Actif' ? 'badge-actif' : 'badge-inactif'}">${escapeHtml(member.statut)}</span></td>
+          <td>
+            ${canManage ? `
+              <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                <select id="member-role-${member.id}">
+                  ${['president','tresorier','secretaire','verificateur','membre','observateur'].map(r => `<option value="${r}" ${roleValue===r?'selected':''}>${r}</option>`).join('')}
+                </select>
+                ${isAdmin ? `
+                  <input id="member-mandate-${member.id}" type="number" min="1" value="${mandateValue}" style="width:90px" title="Durée du mandat (mois)">
+                ` : `
+                  <select id="member-vote-${member.id}" title="Vote validé justificatif">
+                    ${voteOptions}
+                  </select>
+                `}
+                <button class="status-button" onclick="attribuerRole('${member.id}')" ${canManage ? '' : 'disabled'}>
+                  Enregistrer
+                </button>
+              </div>
+              ${isAdmin ? `
+                <div style="display:flex; gap:8px; margin-top:8px; align-items:center;">
+                  <input id="member-resetpwd-${member.id}" type="password" minlength="6" placeholder="Nouveau mot de passe" style="width:220px">
+                  <button class="status-button" onclick="resetPassword('${member.id}')">Réinitialiser le mot de passe</button>
+                </div>
+              ` : ``}
+            ` : `
+              <button class="status-button" disabled>Attribution réservée</button>
+            `}
+          </td>
+        </tr>
+      `;
+    }).join('');
   }
 
   document.getElementById('members-count').textContent = members.length;
@@ -634,6 +793,7 @@ function renderVoteCard(vote) {
   const pourPct = total ? Math.round((Number(vote.pour || 0) / total) * 100) : 0;
   const contrePct = total ? 100 - pourPct : 0;
   const closed = vote.statut !== 'ouvert';
+  const isAdmin = Boolean(currentUser?.permissions?.isAdmin);
 
   return `
     <div class="vote-card" data-vote-id="${vote.id}">
@@ -654,6 +814,10 @@ function renderVoteCard(vote) {
             ? renderElectionVoteButtons(vote)
             : `<button class="btn-pour" onclick="voter(${vote.id}, 'pour')">Voter Pour</button>
                <button class="btn-contre" onclick="voter(${vote.id}, 'contre')">Voter Contre</button>`}
+          ${isAdmin ? `
+            <button class="btn-secondary" type="button" onclick="cloturerVote(${vote.id})">Clôturer</button>
+            <button class="btn-secondary" type="button" onclick="annulerVote(${vote.id})">Annuler</button>
+          ` : ``}
         </div>
       ` : ''}
       <p class="vote-blockchain">Resultat ${closed ? 'publie' : 'en attente de cloture'}</p>
@@ -792,28 +956,46 @@ async function enregistrerTransaction() {
     alert('Seul le Tresorier peut ajouter une transaction.');
     return;
   }
+  const form = document.getElementById('transaction-form');
+  if (!form) return;
+  form.classList.toggle('hidden');
+}
 
-  const libelle = prompt('Libelle de la transaction :')?.trim();
-  if (!libelle) return;
+async function soumettreTransaction(event) {
+  event.preventDefault();
 
-  const montant = lireMontant(prompt('Montant (FCFA) :'));
+  const libelle = document.getElementById('transaction-libelle')?.value?.trim();
+  const montant = lireMontant(document.getElementById('transaction-montant')?.value);
+  const voteId = Number(document.getElementById('transaction-vote-select')?.value || 0);
+
+  if (!libelle) {
+    alert('Libellé obligatoire.');
+    return;
+  }
   if (montant === null) {
-    alert('Le montant doit etre un entier non nul.');
+    alert('Le montant doit être un entier non nul.');
+    return;
+  }
+  if (!Number.isInteger(voteId) || voteId <= 0) {
+    alert('Sélectionnez un vote validé.');
     return;
   }
 
-  const voteId = prompt('ID du vote valide associe :')?.trim();
-  if (!voteId) return;
-
-  const payload = { libelle, montant, vote_id: Number(voteId) };
+  const payload = { libelle, montant, vote_id: voteId };
 
   if (!navigator.onLine) {
     queuePendingTransaction(payload);
-    alert('Connexion absente. Transaction ajoutee a la file d attente.');
+    alert('Connexion absente. Transaction ajoutée à la file d attente.');
     return;
   }
 
-  await submitTransactionPayload(payload);
+  try {
+    await submitTransactionPayload(payload);
+    event.target.reset();
+    document.getElementById('transaction-form')?.classList.add('hidden');
+  } catch (error) {
+    alert(error.message || 'Enregistrement impossible.');
+  }
 }
 
 async function submitTransactionPayload(payload) {
@@ -921,23 +1103,73 @@ async function voter(voteId, choix) {
   }
 }
 
+async function cloturerVote(voteId) {
+  if (!currentUser?.permissions.isAdmin) return;
+  try {
+    await apiFetch(`/api/votes/${voteId}/close`, { method: 'POST' });
+    await chargerVotes();
+  } catch (error) {
+    alert(error.message || 'Clôture impossible.');
+  }
+}
+
+async function annulerVote(voteId) {
+  if (!currentUser?.permissions.isAdmin) return;
+  if (!confirm('Annuler ce vote ?')) return;
+  try {
+    await apiFetch(`/api/votes/${voteId}/annuler`, { method: 'POST' });
+    await chargerVotes();
+  } catch (error) {
+    alert(error.message || 'Annulation impossible.');
+  }
+}
+
 async function attribuerRole(memberId) {
   if (!currentUser?.permissions.canManageMembers) return;
 
-  const role = prompt('Nouveau role :')?.trim();
-  if (!role) return;
-
-  const voteId = prompt('ID du vote valide autorisant ce role :')?.trim();
-  if (!voteId) return;
-
   try {
+    const role = document.getElementById(`member-role-${memberId}`)?.value;
+    if (!role) throw new Error('Role manquant.');
+
+    const payload = { role };
+    if (currentUser?.permissions.isAdmin) {
+      const months = Number(document.getElementById(`member-mandate-${memberId}`)?.value || 0);
+      if (months > 0) payload.duree_mandat_mois = months;
+    } else {
+      const voteId = Number(document.getElementById(`member-vote-${memberId}`)?.value || 0);
+      payload.vote_id = voteId;
+    }
+
     await apiFetch(`/api/members/${memberId}/role`, {
       method: 'PUT',
-      body: JSON.stringify({ role, vote_id: Number(voteId) }),
+      body: JSON.stringify(payload),
     });
     await chargerMembres();
   } catch (error) {
     alert(error.message || 'Attribution impossible.');
+  }
+}
+
+async function resetPassword(memberId) {
+  if (!currentUser?.permissions.isAdmin) return;
+
+  try {
+    const input = document.getElementById(`member-resetpwd-${memberId}`);
+    const nouveau_password = input?.value || '';
+    if (String(nouveau_password).length < 6) {
+      alert('Minimum 6 caractères.');
+      return;
+    }
+
+    await apiFetch(`/api/members/${memberId}/reset-password`, {
+      method: 'POST',
+      body: JSON.stringify({ nouveau_password }),
+    });
+
+    if (input) input.value = '';
+    alert('Mot de passe réinitialisé.');
+  } catch (error) {
+    alert(error.message || 'Réinitialisation impossible.');
   }
 }
 
@@ -962,7 +1194,12 @@ async function configurerCoop(event) {
       }),
     });
     document.getElementById('setup-unique-key').textContent = data.config.cle_unique;
+    initialSetupKey = data.config.cle_unique;
     document.getElementById('setup-key-panel').classList.remove('hidden');
+    await chargerConfig();
+    await chargerMembres();
+    renderSetupMembersList();
+    showPage('setup-members');
   } catch (error) {
     alert(error.message || 'Configuration impossible.');
   }
@@ -984,11 +1221,12 @@ async function creerMembreAdmin(event) {
         username: document.getElementById('admin-member-username').value.trim(),
         email: document.getElementById('admin-member-email').value.trim(),
         password: document.getElementById('admin-member-password').value,
-        role: document.getElementById('admin-member-role').value,
+        role: 'membre',
       }),
     });
     event.target.reset();
     await chargerMembres();
+    renderSetupMembersList();
     alert('Membre ajoute.');
   } catch (error) {
     alert(error.message || 'Creation impossible.');
@@ -1025,7 +1263,7 @@ async function enregistrerCotisationManuelle(event) {
     await apiFetch('/api/cotisations', {
       method: 'POST',
       body: JSON.stringify({
-        member_id: Number(document.getElementById('cotisation-member-id').value),
+        member_id: Number(document.getElementById('cotisation-member-select').value),
         montant: Number(document.getElementById('cotisation-montant').value),
         mode: document.getElementById('cotisation-mode').value.trim(),
       }),
@@ -1052,6 +1290,11 @@ async function initierPaiementFedapay(event) {
       body: JSON.stringify({ montant: amount }),
     });
 
+    if (!fedapayPublicKey) {
+      const keyData = await apiFetch('/api/fedapay/public-key');
+      fedapayPublicKey = keyData.public_key;
+    }
+
     const widget = window.FedapayCheckout || window.FedaPayCheckout || window.FedaPay || window.fedapay;
     if (!widget) {
       throw new Error('Widget FedaPay indisponible.');
@@ -1064,7 +1307,7 @@ async function initierPaiementFedapay(event) {
 
     openWidget.call(widget, {
       token: data.token,
-      public_key: 'pk_sandbox_4OdnCn5ourE2X53kWoJDlymC',
+      public_key: fedapayPublicKey,
       onComplete: () => {
         alert('Paiement FedaPay terminé. Merci !');
         chargerCotisations();
@@ -1177,16 +1420,21 @@ window.showPage = showPage;
 window.deconnecter = deconnecter;
 window.enregistrerProfil = enregistrerProfil;
 window.enregistrerTransaction = enregistrerTransaction;
+window.soumettreTransaction = soumettreTransaction;
 window.afficherRecu = afficherRecu;
 window.fermerRecu = fermerRecu;
 window.suggererOperation = suggererOperation;
 window.voter = voter;
+window.cloturerVote = cloturerVote;
+window.annulerVote = annulerVote;
 window.attribuerRole = attribuerRole;
+window.resetPassword = resetPassword;
 window.ajouterMembre = ajouterMembre;
 window.configurerCoop = configurerCoop;
 window.copierCleUnique = copierCleUnique;
 window.creerMembreAdmin = creerMembreAdmin;
 window.terminerInitialisation = terminerInitialisation;
+window.attribuerRoleDepuisSetup = attribuerRoleDepuisSetup;
 window.mePorterCandidat = mePorterCandidat;
 window.enregistrerCotisationManuelle = enregistrerCotisationManuelle;
 window.initierPaiementFedapay = initierPaiementFedapay;

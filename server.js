@@ -24,6 +24,7 @@ const PORT = process.env.PORT || 3000;
 const sseClients = new Set();
 const BUREAU_POSTES = ['president', 'tresorier', 'secretaire', 'verificateur'];
 const FEDAPAY_TRANSACTION_ENDPOINT = 'https://sandbox-api.fedapay.com/v1/transactions';
+const ALLOWED_MEMBER_ROLES = ['president', 'tresorier', 'secretaire', 'verificateur', 'membre', 'observateur', 'admin'];
 
 const mimeTypes = {
   '.html': 'text/html; charset=utf-8',
@@ -358,6 +359,24 @@ async function createMemberRecord({ nom, username, email, password, role = 'memb
     throw new HttpError(400, 'username doit contenir 3 a 20 caracteres alphanumeriques ou underscore.');
   }
 
+  const duplicateChecks = await pool.query(
+    `SELECT
+       EXISTS(SELECT 1 FROM members WHERE lower(username) = lower($1)) AS username_exists,
+       EXISTS(SELECT 1 FROM members WHERE lower(email) = lower($2)) AS email_exists,
+       EXISTS(SELECT 1 FROM members WHERE lower(nom) = lower($3)) AS nom_exists`,
+    [cleanUsername, cleanEmail, cleanNom]
+  );
+  const duplicates = duplicateChecks.rows[0] || {};
+  if (duplicates.username_exists) {
+    throw new HttpError(409, 'Cet identifiant est déjà pris');
+  }
+  if (duplicates.email_exists) {
+    throw new HttpError(409, 'Cet email est déjà utilisé');
+  }
+  if (duplicates.nom_exists) {
+    throw new HttpError(409, 'Un membre avec ce nom existe déjà');
+  }
+
   const passwordHash = await bcrypt.hash(cleanPassword, 12);
   const result = await pool.query(
     `INSERT INTO members (nom, username, email, password_hash, role)
@@ -569,17 +588,39 @@ async function updateMemberRole(req, res, id) {
   await requireAuth(req, res);
   await requireRoles(req, res, 'admin', 'secretaire', 'secrétaire');
 
-  const { role, vote_id, role_expires_at } = await readBody(req);
-  const cleanRole = cleanString(role);
-  const voteId = parsePositiveInteger(vote_id, 'vote_id');
+  const body = await readBody(req);
+  const cleanRole = normalizePoste(body.role);
+  const normalizedCallerRole = normalizeRole(req.user?.role);
+  const isCallerAdmin = normalizedCallerRole === 'admin';
 
   if (!cleanRole) {
     throw new HttpError(400, 'role est obligatoire.');
   }
 
-  const vote = await pool.query('SELECT * FROM votes WHERE id = $1', [voteId]);
-  if (!vote.rows[0] || vote.rows[0].statut !== 'validé') {
-    throw new HttpError(400, 'Le vote associe doit etre valide.');
+  if (!ALLOWED_MEMBER_ROLES.includes(cleanRole)) {
+    throw new HttpError(400, 'Role invalide.');
+  }
+
+  if (!isCallerAdmin) {
+    const voteId = parsePositiveInteger(body.vote_id, 'vote_id');
+    const vote = await pool.query('SELECT * FROM votes WHERE id = $1', [voteId]);
+    if (!vote.rows[0] || vote.rows[0].statut !== 'validé') {
+      throw new HttpError(400, 'Le vote associe doit etre valide.');
+    }
+  }
+
+  let roleExpiresAt = null;
+  if (cleanRole !== 'membre' && cleanRole !== 'observateur' && cleanRole !== 'admin') {
+    const durationMonths = body.duree_mandat_mois != null
+      ? parsePositiveInteger(body.duree_mandat_mois, 'duree_mandat_mois')
+      : null;
+
+    if (durationMonths) {
+      roleExpiresAt = new Date();
+      roleExpiresAt.setMonth(roleExpiresAt.getMonth() + durationMonths);
+    } else {
+      roleExpiresAt = await getMandateExpirationDate();
+    }
   }
 
   const result = await pool.query(
@@ -587,7 +628,7 @@ async function updateMemberRole(req, res, id) {
      SET role = $1, role_expires_at = $2
      WHERE id = $3
      RETURNING id, nom, username, email, role, role_expires_at, statut, created_at`,
-    [cleanRole, role_expires_at || null, id]
+    [cleanRole, roleExpiresAt, id]
   );
 
   if (result.rowCount === 0) {
@@ -595,7 +636,9 @@ async function updateMemberRole(req, res, id) {
   }
 
   await createNotification(`Role attribue a ${result.rows[0].nom}: ${cleanRole}`, 'membre');
-  await logAdminAction(`Role ${cleanRole} attribue au membre ${id}`, getRequestIp(req));
+  if (isCallerAdmin) {
+    await logAdminAction(`Role ${cleanRole} attribue au membre ${id}`, getRequestIp(req));
+  }
   sendJson(res, 200, { member: result.rows[0] });
 }
 
@@ -745,6 +788,7 @@ async function closeVote(req, res, id) {
   if (!req.user) {
     await requireAuth(req, res);
   }
+  const isCallerAdmin = normalizeRole(req.user?.role) === 'admin';
 
   const result = await pool.query('SELECT * FROM votes WHERE id = $1', [id]);
   const vote = result.rows[0];
@@ -757,7 +801,7 @@ async function closeVote(req, res, id) {
     throw new HttpError(400, 'Ce vote est deja ferme.');
   }
 
-  if (vote.expires_at && new Date(vote.expires_at).getTime() > Date.now()) {
+  if (!isCallerAdmin && vote.expires_at && new Date(vote.expires_at).getTime() > Date.now()) {
     throw new HttpError(400, 'Ce vote n est pas encore expire.');
   }
 
@@ -853,6 +897,55 @@ async function closeVote(req, res, id) {
   sendJson(res, 200, { vote: serializeVote(updated.rows[0]) });
 }
 
+async function cancelVote(req, res, id) {
+  await requireAuth(req, res);
+  await requireRoles(req, res, 'admin');
+
+  const existing = await pool.query('SELECT * FROM votes WHERE id = $1', [id]);
+  if (existing.rowCount === 0) {
+    throw new HttpError(404, 'Vote introuvable.');
+  }
+
+  const updated = await pool.query(
+    `UPDATE votes
+     SET statut = $1
+     WHERE id = $2
+     RETURNING *`,
+    ['annulé', id]
+  );
+
+  await createNotification('Vote annulé par l administrateur', 'vote');
+  await logAdminAction(`Vote ${id} annule`, getRequestIp(req));
+  sendJson(res, 200, { vote: serializeVote(updated.rows[0]) });
+}
+
+async function resetMemberPassword(req, res, memberId) {
+  await requireAuth(req, res);
+  await requireRoles(req, res, 'admin');
+
+  const body = await readBody(req);
+  const newPassword = cleanString(body.nouveau_password);
+  if (!newPassword || newPassword.length < 6) {
+    throw new HttpError(400, 'Minimum 6 caracteres.');
+  }
+
+  const passwordHash = await bcrypt.hash(newPassword, 12);
+  const updated = await pool.query(
+    `UPDATE members
+     SET password_hash = $1
+     WHERE id = $2
+     RETURNING id`,
+    [passwordHash, memberId]
+  );
+
+  if (updated.rowCount === 0) {
+    throw new HttpError(404, 'Membre introuvable.');
+  }
+
+  await logAdminAction(`Mot de passe reinitialise pour le membre ${memberId}`, getRequestIp(req));
+  sendJson(res, 200, { success: true });
+}
+
 async function createCotisation(req, res) {
   await requireAuth(req, res);
   await requireRoles(req, res, 'tresorier', 'trésorier');
@@ -882,28 +975,41 @@ async function initierFedapay(req, res) {
 
   const { montant } = await readBody(req);
   const amount = parsePositiveInteger(montant, 'montant');
-  const apiKey = process.env.FEDAPAY_SERVER_KEY || 'sk_sandbox_YQWarfYpVd68IEEZ0MHICcn3';
+  const apiKey = cleanString(process.env.FEDAPAY_SERVER_KEY);
+  if (!apiKey) {
+    throw new HttpError(500, 'FEDAPAY_SERVER_KEY manquant.');
+  }
+  const baseUrl = cleanString(process.env.PUBLIC_BASE_URL).replace(/\/$/, '');
+  const proto = cleanString(req.headers['x-forwarded-proto']).split(',')[0] || 'http';
+  const callbackUrl = baseUrl
+    ? `${baseUrl}/api/cotisations/webhook`
+    : `${proto}://${req.headers.host}/api/cotisations/webhook`;
 
   const response = await postJson(FEDAPAY_TRANSACTION_ENDPOINT, {
     description: 'Cotisation CoopLedger',
     amount,
     currency: { iso: 'XOF' },
-    callback_url: 'https://coopledger-demo.up.railway.app/api/cotisations/webhook',
+    callback_url: callbackUrl,
     metadata: { member_id: req.user.id },
   }, {
     Authorization: `Bearer ${apiKey}`,
   });
 
   const data = response.data;
+  console.log('FedaPay response:', JSON.stringify(data));
   if (!response.ok) {
     throw new HttpError(response.status, data.error || 'Erreur lors de la creation de la transaction FedaPay.');
   }
 
-  const token = data.token || data.transaction?.token;
+  const token = data?.v1?.token || data?.token || data?.payment_token || data?.transaction?.token;
   const url = data.url || data.payment_url || data.redirect_url || data.transaction?.payment_url;
 
-  if (!token || !url) {
-    throw new HttpError(502, 'Reponse incomplette de FedaPay.');
+  if (!token) {
+    sendJson(res, 502, { error: 'Token FedaPay absent', raw: data });
+    return;
+  }
+  if (!url) {
+    throw new HttpError(502, 'Reponse incomplette de FedaPay (URL absente).');
   }
 
   sendJson(res, 200, { token, url });
@@ -1070,6 +1176,21 @@ async function notificationStream(req, res) {
   req.on('close', () => {
     sseClients.delete(res);
   });
+}
+
+async function listNotifications(req, res) {
+  await requireAuth(req, res);
+  const result = await pool.query('SELECT * FROM notifications ORDER BY created_at DESC');
+  sendJson(res, 200, { notifications: result.rows });
+}
+
+async function getFedapayPublicKey(req, res) {
+  await requireAuth(req, res);
+  const key = cleanString(process.env.FEDAPAY_PUBLIC_KEY);
+  if (!key) {
+    throw new HttpError(500, 'FEDAPAY_PUBLIC_KEY manquant.');
+  }
+  sendJson(res, 200, { public_key: key });
 }
 
 async function monthlyReport(req, res) {
@@ -1289,6 +1410,11 @@ async function routeApi(req, res, pathname) {
   const memberRoleMatch = pathname.match(/^\/api\/members\/(\d+)\/role$/);
   if (req.method === 'PUT' && memberRoleMatch) return updateMemberRole(req, res, Number(memberRoleMatch[1]));
 
+  const resetPasswordMatch = pathname.match(/^\/api\/members\/(\d+)\/reset-password$/);
+  if (req.method === 'POST' && resetPasswordMatch) {
+    return resetMemberPassword(req, res, Number(resetPasswordMatch[1]));
+  }
+
   if (req.method === 'GET' && pathname === '/api/transactions') return listTransactions(req, res);
   if (req.method === 'POST' && pathname === '/api/transactions') return createTransaction(req, res);
 
@@ -1308,19 +1434,21 @@ async function routeApi(req, res, pathname) {
     return closeCandidaturePeriod(req, res, Number(candidatureCloseMatch[1]));
   }
 
-  const voteActionMatch = pathname.match(/^\/api\/votes\/(\d+)\/(vote|close)$/);
+  const voteActionMatch = pathname.match(/^\/api\/votes\/(\d+)\/(vote|close|annuler)$/);
   if (voteActionMatch && req.method === 'POST') {
-    return voteActionMatch[2] === 'vote'
-      ? castVote(req, res, Number(voteActionMatch[1]))
-      : closeVote(req, res, Number(voteActionMatch[1]));
+    if (voteActionMatch[2] === 'vote') return castVote(req, res, Number(voteActionMatch[1]));
+    if (voteActionMatch[2] === 'close') return closeVote(req, res, Number(voteActionMatch[1]));
+    return cancelVote(req, res, Number(voteActionMatch[1]));
   }
 
   if (req.method === 'POST' && pathname === '/api/cotisations') return createCotisation(req, res);
   if (req.method === 'POST' && pathname === '/api/fedapay/initier') return initierFedapay(req, res);
+  if (req.method === 'GET' && pathname === '/api/fedapay/public-key') return getFedapayPublicKey(req, res);
   if (req.method === 'POST' && pathname === '/api/cotisations/webhook') return fedapayWebhook(req, res);
   if (req.method === 'GET' && pathname === '/api/cotisations/me') return myCotisations(req, res);
 
   if (req.method === 'GET' && pathname === '/api/notifications/stream') return notificationStream(req, res);
+  if (req.method === 'GET' && pathname === '/api/notifications') return listNotifications(req, res);
   if (req.method === 'GET' && pathname === '/api/rapport/mensuel') return monthlyReport(req, res);
   if (req.method === 'GET' && pathname === '/api/sante') return healthScore(req, res);
 
