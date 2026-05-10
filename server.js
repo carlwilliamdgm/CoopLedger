@@ -263,6 +263,31 @@ async function login(req, res) {
     throw new HttpError(400, 'email et password sont obligatoires.');
   }
 
+  const adminEmail = cleanString(process.env.ADMIN_EMAIL).toLowerCase();
+  if (adminEmail && cleanEmail === adminEmail) {
+    if (isAdminBlocked(cleanEmail)) {
+      throw new HttpError(403, 'Compte admin bloque apres 3 tentatives echouees.');
+    }
+
+    if (cleanPassword !== process.env.ADMIN_PASSWORD) {
+      recordFailedAdminLogin(cleanEmail);
+      throw new HttpError(401, 'Identifiants invalides.');
+    }
+
+    resetAdminFailedAttempts(cleanEmail);
+
+    const admin = {
+      id: 0,
+      nom: 'Admin',
+      email: cleanEmail,
+      role: 'admin',
+      role_expires_at: null,
+    };
+    const token = generateToken(admin);
+    sendJson(res, 200, { token, member: admin });
+    return;
+  }
+
   const result = await pool.query('SELECT * FROM members WHERE email = $1', [cleanEmail]);
   const member = result.rows[0];
   const isAdmin = member && isAdminRole(member.role);
