@@ -18,6 +18,77 @@ let demoSessionTimer = null;
 const TOKEN_KEY = 'token';
 const PENDING_TRANSACTIONS_KEY = 'pendingTransactions';
 
+const ROLE_PERMISSIONS = {
+  createTransaction: ['tresorier'],
+  createVote: ['president'],
+  createMembre: ['admin', 'secretaire'],
+  updateMembreStatut: ['admin', 'secretaire'],
+  updateMembreRole: ['admin', 'secretaire'],
+  signalerTransaction: ['verificateur'],
+  enregistrerCotisation: ['tresorier'],
+  genererRapport: ['admin', 'president', 'tresorier', 'verificateur'],
+  adminActions: ['admin'],
+};
+
+/** @type {ReturnType<typeof setTimeout>|null} */
+let appToastTimer = null;
+
+function checkPermission(action, userRole) {
+  const allowed = ROLE_PERMISSIONS[action];
+  if (!allowed || !allowed.length) {
+    return false;
+  }
+  const r = normalizeRole(userRole);
+  return allowed.some((role) => {
+    const a = normalizeRole(role);
+    if (r === a) return true;
+    if (a === 'tresorier' && r === 'tresoriere') return true;
+    return false;
+  });
+}
+
+function showPermissionError(action, userRole) {
+  const allowed = ROLE_PERMISSIONS[action] || [];
+  const rolesText = allowed.map((role) => String(role)).join(', ');
+  const displayRole = userRole != null && String(userRole).trim() !== ''
+    ? String(userRole)
+    : String(currentUser?.role ?? '—');
+  const msg = `Cette action est réservée au(x) rôle(s) : ${rolesText}. Votre rôle actuel est ${displayRole}.`;
+  showAppToast(msg);
+}
+
+function showAppToast(message) {
+  let el = document.getElementById('app-toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'app-toast';
+    el.className = 'demo-mode-banner';
+    el.setAttribute('role', 'alert');
+    el.style.whiteSpace = 'normal';
+    el.style.lineHeight = '1.4';
+    el.style.fontWeight = '600';
+    el.style.letterSpacing = '0.02em';
+    el.style.cursor = 'pointer';
+    el.title = 'Cliquer pour fermer';
+    el.addEventListener('click', () => el.classList.add('hidden'));
+    const main = document.querySelector('.main-content');
+    const anchor = document.getElementById('demo-mode-banner');
+    if (main) {
+      if (anchor && anchor.parentNode === main) {
+        anchor.insertAdjacentElement('afterend', el);
+      } else {
+        main.insertBefore(el, main.firstChild);
+      }
+    } else {
+      document.body.appendChild(el);
+    }
+  }
+  el.textContent = message;
+  el.classList.remove('hidden');
+  if (appToastTimer) clearTimeout(appToastTimer);
+  appToastTimer = setTimeout(() => el.classList.add('hidden'), 9000);
+}
+
 function getToken() {
   return localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY);
 }
@@ -748,7 +819,11 @@ function renderSetupMembersList() {
 }
 
 async function attribuerRoleDepuisSetup(memberId) {
-  if (!currentUser?.permissions.isAdmin) return;
+  const userRole = currentUser?.role;
+  if (!checkPermission('updateMembreRole', userRole)) {
+    showPermissionError('updateMembreRole', userRole);
+    return;
+  }
   try {
     const role = document.getElementById(`setup-role-${memberId}`)?.value;
     await apiFetch(`/api/members/${memberId}/role`, {
@@ -796,7 +871,11 @@ async function chargerConfigAdmin() {
 }
 
 async function enregistrerConfigCle(cle) {
-  if (!currentUser?.permissions?.canEditCoopConfig) return;
+  const userRole = currentUser?.role;
+  if (!checkPermission('adminActions', userRole)) {
+    showPermissionError('adminActions', userRole);
+    return;
+  }
   const inputId = cle === 'nom_coop'
     ? 'cfg-nom-coop'
     : cle === 'duree_mandat'
@@ -885,7 +964,11 @@ function basculerPanelConfigVote(forceClose = false) {
 }
 
 async function soumettrePropositionConfig() {
-  if (!currentUser?.permissions?.canProposeConfigVote) return;
+  const userRole = currentUser?.role;
+  if (!checkPermission('createVote', userRole)) {
+    showPermissionError('createVote', userRole);
+    return;
+  }
   const cle = document.getElementById('config-vote-cle')?.value || '';
   const nouvelleValeur = document.getElementById('config-vote-valeur')?.value ?? '';
   const duree = Math.max(72, Number(document.getElementById('config-vote-duree')?.value || 72));
@@ -1518,8 +1601,9 @@ function majChampsFluxFinancier() {
 }
 
 async function enregistrerTransaction() {
-  if (!currentUser?.permissions.canTransact) {
-    alert('Seul le Tresorier peut ajouter une transaction.');
+  const userRole = currentUser?.role;
+  if (!checkPermission('createTransaction', userRole) && !checkPermission('enregistrerCotisation', userRole)) {
+    showPermissionError('createTransaction', userRole);
     return;
   }
   const form = document.getElementById('transaction-form');
@@ -1538,6 +1622,11 @@ async function soumettreFluxFinancier(event) {
   const flow = document.getElementById('txn-flow-type')?.value || '';
 
   if (flow === 'cotisation_manuelle') {
+    const userRole = currentUser?.role;
+    if (!checkPermission('enregistrerCotisation', userRole)) {
+      showPermissionError('enregistrerCotisation', userRole);
+      return;
+    }
     const memberId = Number(document.getElementById('txn-cot-member')?.value || 0);
     const montant = Number(document.getElementById('txn-cot-montant')?.value || 0);
     const mode = String(document.getElementById('txn-cot-mode')?.value || '').trim();
@@ -1591,6 +1680,12 @@ async function soumettreFluxFinancier(event) {
   const type = flow === 'depense' ? 'depense' : 'recette';
   const payload = { libelle, montant: montantPositif, vote_id: voteId, type };
 
+  const userRole = currentUser?.role;
+  if (!checkPermission('createTransaction', userRole)) {
+    showPermissionError('createTransaction', userRole);
+    return;
+  }
+
   if (!navigator.onLine) {
     queuePendingTransaction(payload);
     alert('Connexion absente. Mouvement ajouté à la file d\'attente.');
@@ -1637,6 +1732,10 @@ async function flushPendingTransactions() {
 
   const pending = getPendingTransactions();
   if (!pending.length) return;
+  if (!checkPermission('createTransaction', currentUser?.role)) {
+    showPermissionError('createTransaction', currentUser?.role);
+    return;
+  }
 
   const remaining = [];
   for (const payload of pending) {
@@ -1668,8 +1767,9 @@ function fermerRecu() {
 }
 
 async function suggererOperation() {
-  if (!currentUser?.permissions.canSuggest) {
-    alert('Seul le President peut suggerer une operation.');
+  const userRole = currentUser?.role;
+  if (!checkPermission('createVote', userRole)) {
+    showPermissionError('createVote', userRole);
     return;
   }
 
@@ -1731,7 +1831,9 @@ async function cloturerVote(voteId) {
 }
 
 async function prolongerVoteDepuisCarte(voteId) {
-  if (!currentUser?.permissions.canProlongVotes) {
+  const userRole = currentUser?.role;
+  if (!checkPermission('adminActions', userRole)) {
+    showPermissionError('adminActions', userRole);
     return;
   }
   const input = document.getElementById(`prolong-hours-${voteId}`);
@@ -1764,7 +1866,11 @@ async function annulerVote(voteId) {
 }
 
 async function attribuerRole(memberId) {
-  if (!currentUser?.permissions.canManageMembers) return;
+  const userRole = currentUser?.role;
+  if (!checkPermission('updateMembreRole', userRole)) {
+    showPermissionError('updateMembreRole', userRole);
+    return;
+  }
 
   try {
     const role = document.getElementById(`member-role-${memberId}`)?.value;
@@ -1790,7 +1896,11 @@ async function attribuerRole(memberId) {
 }
 
 async function resetPassword(memberId) {
-  if (!currentUser?.permissions.isAdmin) return;
+  const userRole = currentUser?.role;
+  if (!checkPermission('adminActions', userRole)) {
+    showPermissionError('adminActions', userRole);
+    return;
+  }
 
   try {
     const input = document.getElementById(`member-resetpwd-${memberId}`);
@@ -1814,6 +1924,11 @@ async function resetPassword(memberId) {
 }
 
 async function basculerStatutMembre(memberId, statut) {
+  const userRole = currentUser?.role;
+  if (!checkPermission('updateMembreStatut', userRole)) {
+    showPermissionError('updateMembreStatut', userRole);
+    return;
+  }
   try {
     await apiFetch(`/api/members/${memberId}/statut`, {
       method: 'POST',
@@ -1826,8 +1941,9 @@ async function basculerStatutMembre(memberId, statut) {
 }
 
 async function ajouterMembre() {
-  if (!currentUser?.permissions.isAdmin && !currentUser?.permissions.canSecretaryFlows) {
-    alert('Ajout réservé au bureau autorise.');
+  const userRole = currentUser?.role;
+  if (!checkPermission('createMembre', userRole)) {
+    showPermissionError('createMembre', userRole);
     return;
   }
 
@@ -1836,6 +1952,12 @@ async function ajouterMembre() {
 
 async function configurerCoop(event) {
   event.preventDefault();
+
+  const userRole = currentUser?.role;
+  if (!checkPermission('adminActions', userRole)) {
+    showPermissionError('adminActions', userRole);
+    return;
+  }
 
   try {
     const data = await apiFetch('/api/config/init', {
@@ -1864,6 +1986,12 @@ function copierCleUnique() {
 
 async function creerMembreAdmin(event) {
   event.preventDefault();
+
+  const userRole = currentUser?.role;
+  if (!checkPermission('createMembre', userRole)) {
+    showPermissionError('createMembre', userRole);
+    return;
+  }
 
   try {
     await apiFetch('/api/members/create', {
@@ -1904,7 +2032,11 @@ async function mePorterCandidat(poste) {
 }
 
 async function cloturerCandidaturePeriode(vacancyId) {
-  if (!currentUser?.permissions?.isAdmin) return;
+  const userRole = currentUser?.role;
+  if (!checkPermission('adminActions', userRole)) {
+    showPermissionError('adminActions', userRole);
+    return;
+  }
   try {
     await apiFetch(`/api/candidatures/${vacancyId}/close`, { method: 'POST' });
     await Promise.all([chargerCandidatures(), chargerVotes()]);
@@ -1917,7 +2049,11 @@ async function cloturerCandidaturePeriode(vacancyId) {
 }
 
 async function annulerElectionPoste(vacancyId) {
-  if (!currentUser?.permissions?.isAdmin) return;
+  const userRole = currentUser?.role;
+  if (!checkPermission('adminActions', userRole)) {
+    showPermissionError('adminActions', userRole);
+    return;
+  }
   if (!window.confirm('Annuler cette élection ?')) return;
   try {
     await apiFetch(`/api/candidatures/${vacancyId}/annuler`, { method: 'POST' });
@@ -1933,8 +2069,9 @@ async function annulerElectionPoste(vacancyId) {
 async function enregistrerCotisationManuelle(event) {
   event.preventDefault();
 
-  if (!currentUser?.permissions.canTransact) {
-    alert('Seul le Tresorier peut enregistrer une cotisation.');
+  const userRole = currentUser?.role;
+  if (!checkPermission('enregistrerCotisation', userRole)) {
+    showPermissionError('enregistrerCotisation', userRole);
     return;
   }
 
