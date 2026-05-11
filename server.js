@@ -1762,6 +1762,86 @@ async function annulerCandidatureElection(req, res, id) {
   sendJson(res, 200, { candidature: updatedPv.rows[0] });
 }
 
+async function prolongCandidatureElection(req, res, id) {
+  await requireAuth(req, res);
+  await requireRoles(req, res, 'admin');
+
+  const vacancyId = Number(id);
+  const { nouvelle_duree_heures } = await readBody(req);
+  const hours = parsePositiveInteger(nouvelle_duree_heures, 'nouvelle_duree_heures');
+
+  const vacancyResult = await pool.query('SELECT * FROM postes_vacants WHERE id = $1', [vacancyId]);
+  const pv = vacancyResult.rows[0];
+  if (!pv) {
+    throw new HttpError(404, 'Election introuvable.');
+  }
+
+  if (pv.statut === 'candidature') {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const oldCreatedMs = new Date(pv.created_at).getTime();
+      const newCreatedAt = new Date(oldCreatedMs + hours * 60 * 60 * 1000);
+      const newDeadline = new Date(newCreatedAt.getTime() + 72 * 60 * 60 * 1000);
+      const updatedPv = await client.query(
+        `UPDATE postes_vacants SET created_at = $1 WHERE id = $2 RETURNING *`,
+        [newCreatedAt, vacancyId],
+      );
+      await client.query(
+        `UPDATE candidatures SET expires_at = $1 WHERE poste = $2 AND statut = 'ouvert'`,
+        [newDeadline, pv.poste],
+      );
+      await client.query('COMMIT');
+
+      await createNotification("Période prolongée par l'administrateur", 'candidature', 'tous');
+      await logAdminAction(
+        `Periode de candidature prolongee de ${hours}h (poste vacant ${vacancyId})`,
+        getRequestIp(req),
+      );
+      sendJson(res, 200, { poste_vacant: updatedPv.rows[0] });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+    return;
+  }
+
+  if (pv.statut === 'vote') {
+    const voteRes = await pool.query(
+      `SELECT * FROM votes
+       WHERE poste_vacant_id = $1 AND type = 'election' AND statut = 'ouvert'
+       ORDER BY id DESC LIMIT 1`,
+      [vacancyId],
+    );
+    const vote = voteRes.rows[0];
+    if (!vote) {
+      throw new HttpError(400, 'Aucun vote d election ouvert pour ce poste.');
+    }
+
+    const expiryMs = vote.expires_at ? new Date(vote.expires_at).getTime() : Date.now();
+    const baseMs = Math.max(Date.now(), expiryMs);
+    const expiresAt = new Date(baseMs + hours * 60 * 60 * 1000);
+    const newDuration = Number(vote.duree_heures || 72) + hours;
+
+    const updated = await pool.query(
+      `UPDATE votes SET expires_at = $1, duree_heures = $2 WHERE id = $3 RETURNING *`,
+      [expiresAt, newDuration, vote.id],
+    );
+
+    await createNotification("Période prolongée par l'administrateur", 'vote', 'tous');
+    await logAdminAction(
+      `Vote d election prolonge de ${hours}h (poste vacant ${vacancyId}, vote ${vote.id})`,
+      getRequestIp(req),
+    );
+    sendJson(res, 200, { vote: serializeVote(updated.rows[0]) });
+    return;
+  }
+
+  throw new HttpError(400, 'Prolongation disponible seulement pour les statuts candidature ou vote.');
+}
+
 async function fedapayWebhook(req, res) {
   const rawBody = await readRawBody(req);
   const signatureHeader = req.headers['x-fedapay-signature'] || req.headers['x-fedapay-signature-256'] || req.headers['x-fp-signature'] || req.headers['x-fedapay-signaturesha256'];
@@ -2496,6 +2576,11 @@ async function routeApi(req, res, pathname) {
   const candidatureAnnulerMatch = pathname.match(/^\/api\/candidatures\/(\d+)\/annuler$/);
   if (req.method === 'POST' && candidatureAnnulerMatch) {
     return annulerCandidatureElection(req, res, Number(candidatureAnnulerMatch[1]));
+  }
+
+  const candidatureProlongMatch = pathname.match(/^\/api\/candidatures\/(\d+)\/prolong$/);
+  if (req.method === 'POST' && candidatureProlongMatch) {
+    return prolongCandidatureElection(req, res, Number(candidatureProlongMatch[1]));
   }
 
   const voteProlongMatch = pathname.match(/^\/api\/votes\/(\d+)\/prolong$/);
