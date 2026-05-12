@@ -21,6 +21,29 @@ const THEME_STORAGE_KEY = 'cl_theme';
 const LANG_STORAGE_KEY = 'cl_lang';
 const PUSH_PREF_STORAGE_KEY = 'cl_push_enabled';
 
+/** Page ids used in showPage() that sync with URL hash (sidebar + dashboard). */
+const HASH_ROUTABLE_PAGES = new Set([
+  'dashboard',
+  'transactions',
+  'vote',
+  'membres',
+  'cotisations',
+  'notifications',
+  'configuration',
+]);
+
+function parseShellRouteFromHash() {
+  const raw = String(window.location.hash || '').replace(/^#/, '').trim();
+  if (!raw) return null;
+  return HASH_ROUTABLE_PAGES.has(raw) ? raw : null;
+}
+
+function getActiveShellPageId() {
+  const active = document.querySelector('.page.active');
+  if (!active?.id || !active.id.startsWith('page-')) return null;
+  return active.id.slice('page-'.length);
+}
+
 /** @type {MediaQueryList|null} */
 let systemLightMql = null;
 
@@ -736,11 +759,17 @@ async function startAfterLogin() {
     }
   }
 
-  showPage('dashboard');
+  const initialPage = parseShellRouteFromHash() || 'dashboard';
+  showPage(initialPage);
   loadProtectedData();
 }
 
-function showPage(pageId, navTarget) {
+/**
+ * @param {string} pageId
+ * @param {Element|null} [navTarget]
+ * @param {{ updateHash?: boolean }} [options]
+ */
+function showPage(pageId, navTarget, options = {}) {
   document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
 
@@ -752,6 +781,14 @@ function showPage(pageId, navTarget) {
 
   onPageShown(pageId);
   closeMobileSidebar();
+
+  const updateHash = options.updateHash !== false;
+  if (updateHash && HASH_ROUTABLE_PAGES.has(pageId)) {
+    const target = `#${pageId}`;
+    if (window.location.hash !== target) {
+      window.location.hash = pageId;
+    }
+  }
 }
 
 function onPageShown(pageId) {
@@ -806,6 +843,19 @@ function toggleMobileSidebar() {
 
 function onMobileSidebarMqChange() {
   if (!MOBILE_SIDEBAR_MQ.matches) closeMobileSidebar();
+}
+
+function installShellHashRouting() {
+  const syncFromHash = () => {
+    if (document.getElementById('auth-screen') && !document.getElementById('auth-screen').classList.contains('hidden')) {
+      return;
+    }
+    const id = parseShellRouteFromHash() || 'dashboard';
+    if (getActiveShellPageId() === id) return;
+    showPage(id, null, { updateHash: false });
+  };
+  window.addEventListener('hashchange', syncFromHash);
+  window.addEventListener('popstate', syncFromHash);
 }
 
 function installMobileShellNav() {
@@ -927,9 +977,9 @@ function installExtraNavItems() {
   if (!nav || nav.querySelector('[data-page="cotisations"]')) return;
 
   nav.insertAdjacentHTML('beforeend', `
-    <a href="#" class="nav-item" data-page="cotisations"><span data-i18n="nav.cotisations">💰 Cotisations</span></a>
-    <a href="#" class="nav-item" data-page="notifications"><span data-i18n="nav.notifications">🔔 Notifications</span></a>
-    <a href="#" class="nav-item hidden" data-page="configuration" id="nav-configuration"><span data-i18n="nav.configuration">⚙️ Configuration</span></a>
+    <a href="#cotisations" class="nav-item" data-page="cotisations"><span data-i18n="nav.cotisations">💰 Cotisations</span></a>
+    <a href="#notifications" class="nav-item" data-page="notifications"><span data-i18n="nav.notifications">🔔 Notifications</span></a>
+    <a href="#configuration" class="nav-item hidden" data-page="configuration" id="nav-configuration"><span data-i18n="nav.configuration">⚙️ Configuration</span></a>
   `);
 
   nav.querySelectorAll('.nav-item').forEach(item => {
@@ -2710,8 +2760,10 @@ window.etapeDemoSuivante = etapeDemoSuivante;
 window.arreterDemo = arreterDemo;
 
 document.addEventListener('DOMContentLoaded', () => {
+  parseShellRouteFromHash();
   installDynamicInterface();
   installMobileShellNav();
+  installShellHashRouting();
   installSettingsPanel();
   installThemeMediaListener();
   applyDocumentI18n();
