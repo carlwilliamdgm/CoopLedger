@@ -39,9 +39,20 @@ async function loadStellarKeypairFromConfig() {
   );
   let publicKey = null;
   let secret = null;
+  /** @type {boolean} */
+  let stellarSecretKeyRowPresent = false;
   for (const row of fromDb.rows) {
     if (row.cle === 'stellar_public_key') publicKey = cleanString(row.valeur);
-    if (row.cle === 'stellar_secret_key') secret = cleanString(row.valeur);
+    if (row.cle === 'stellar_secret_key') {
+      stellarSecretKeyRowPresent = true;
+      secret = cleanString(row.valeur);
+    }
+  }
+
+  if (stellarSecretKeyRowPresent && !secret) {
+    throw new Error(
+      'stellar_secret_key est vide dans la table config (valeur vide ou espaces). Renseignez une cle valide ou supprimez la ligne pour utiliser STELLAR_SECRET_KEY / SECRET_KEY.',
+    );
   }
 
   secret = secret || cleanString(process.env.STELLAR_SECRET_KEY) || cleanString(process.env.SECRET_KEY);
@@ -49,6 +60,10 @@ async function loadStellarKeypairFromConfig() {
 
   if (!secret) {
     throw new Error('Cle Stellar secretes introuvable (config stellar_secret_key ou variable STELLAR_SECRET_KEY).');
+  }
+
+  if (!cleanString(secret)) {
+    throw new Error('Cle Stellar secrete vide apres normalisation (config ou variables d environnement).');
   }
 
   const keypair = Keypair.fromSecret(secret);

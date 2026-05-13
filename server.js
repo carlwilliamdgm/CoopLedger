@@ -397,13 +397,14 @@ async function closeCandidaturePeriodByVacancy(vacancyId, automated = true) {
     return null;
   }
 
+  const expiryClause = automated ? 'AND candidatures.expires_at <= NOW()' : '';
   const candidates = await pool.query(
     `SELECT candidatures.*, members.nom
      FROM candidatures
      JOIN members ON members.id = candidatures.member_id
      WHERE candidatures.poste = $1
        AND candidatures.statut = 'ouvert'
-       AND candidatures.expires_at <= NOW()
+       ${expiryClause}
      ORDER BY candidatures.created_at ASC`,
     [vacancy.poste]
   );
@@ -1103,6 +1104,7 @@ async function createVote(req, res) {
     if (activeMembers < 4) {
       throw new HttpError(403, 'Minimum 4 membres actifs requis pour ouvrir une election.');
     }
+    await requireRoles(req, res, 'president', 'président');
   } else if (voteType === 'config') {
     await requireRoles(req, res, 'president', 'président');
   } else {
@@ -1151,7 +1153,19 @@ async function createVote(req, res) {
 
 async function castVote(req, res, id) {
   await requireAuth(req, res);
-  await requireRoles(req, res, 'membre');
+  await requireRoles(
+    req,
+    res,
+    'membre',
+    'president',
+    'président',
+    'tresorier',
+    'trésorier',
+    'secretaire',
+    'secrétaire',
+    'verificateur',
+    'vérificateur',
+  );
 
   const { choix } = await readBody(req);
   const cleanChoice = cleanString(choix).toLowerCase();

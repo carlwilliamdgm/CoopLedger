@@ -15,6 +15,9 @@ let initialSetupKey = null;
 let paiementRetourAwaitingSse = false;
 let paiementRetourRedirectTimer = null;
 let demoSessionTimer = null;
+/** @type {Set<string|number>} */
+const voteSubmissionInFlight = new Set();
+let configProposalSubmitting = false;
 
 const TOKEN_KEY = 'token';
 const PENDING_TRANSACTIONS_KEY = 'pendingTransactions';
@@ -668,7 +671,7 @@ function getPermissions(role) {
   return {
     canSuggest: normalized === 'president',
     canTransact: normalized === 'tresorier' || normalized === 'tresoriere',
-    canVote: normalized === 'membre',
+    canVote: ['membre', 'president', 'tresorier', 'tresoriere', 'secretaire', 'verificateur'].includes(normalized),
     canManageMembers: ['admin', 'secretaire'].includes(normalized),
     canSecretaryFlows: isSecretary,
     canAssignRoleDropdown: isAdmin,
@@ -693,7 +696,7 @@ function getProfileDescription(role) {
   if (permissions.canTransact) return 'Peut enregistrer cotisations et transactions scellees.';
   if (permissions.canManageMembers) return 'Peut administrer les membres et les roles.';
   if (permissions.canVerify) return 'Peut signaler une transaction suspecte.';
-  if (permissions.canVote) return 'Peut voter et consulter ses cotisations.';
+  if (permissions.canVote) return 'Peut voter aux consultations et élections (selon les règles de la coopérative).';
   return 'Peut consulter les informations autorisees.';
 }
 
@@ -1272,7 +1275,11 @@ function markDashboardNodes() {
 async function loginUser(event) {
   event.preventDefault();
 
+  const submitBtn = event.target?.querySelector?.('button[type="submit"]');
+  if (submitBtn?.disabled) return;
+
   try {
+    if (submitBtn) submitBtn.disabled = true;
     const data = await apiFetch('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify({
@@ -1284,13 +1291,19 @@ async function loginUser(event) {
     openSessionFromToken(data.token);
   } catch (error) {
     alert(error.message || 'Connexion impossible.');
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
   }
 }
 
 async function enregistrerProfil(event) {
   event.preventDefault();
 
+  const submitBtn = event.target?.querySelector?.('button[type="submit"]');
+  if (submitBtn?.disabled) return;
+
   try {
+    if (submitBtn) submitBtn.disabled = true;
     const data = await apiFetch('/api/auth/register', {
       method: 'POST',
       body: JSON.stringify({
@@ -1307,6 +1320,8 @@ async function enregistrerProfil(event) {
     openSessionFromToken(data.token);
   } catch (error) {
     alert(error.message || 'Inscription impossible.');
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
   }
 }
 
@@ -1532,9 +1547,14 @@ async function soumettrePropositionConfig() {
     showPermissionError('createVote', userRole);
     return;
   }
+  if (configProposalSubmitting) return;
   const cle = document.getElementById('config-vote-cle')?.value || '';
   const nouvelleValeur = document.getElementById('config-vote-valeur')?.value ?? '';
   const duree = Math.max(72, Number(document.getElementById('config-vote-duree')?.value || 72));
+  const panel = document.getElementById('config-vote-panel');
+  const triggerBtn = panel?.querySelector('button.btn-primary');
+  configProposalSubmitting = true;
+  if (triggerBtn) triggerBtn.disabled = true;
   try {
     await apiFetch('/api/votes', {
       method: 'POST',
@@ -1550,6 +1570,9 @@ async function soumettrePropositionConfig() {
     await chargerVotes();
   } catch (error) {
     alert(error.message || 'Impossible de créer le vote.');
+  } finally {
+    configProposalSubmitting = false;
+    if (triggerBtn) triggerBtn.disabled = false;
   }
 }
 
@@ -1877,7 +1900,8 @@ function renderCandidatureCard(vacancy) {
   const isObs = currentUser && normalizeRole(currentUser.role) === 'observateur';
   const isAdmin = Boolean(currentUser?.permissions?.isAdmin);
   const statutPv = cleanString(vacancy.statut);
-  const peutSePresenter = !isObs && !estCandidat && statutPv !== 'annulé' && statutPv !== 'pourvu'
+  const isDemo = isDemoSession();
+  const peutSePresenter = !isDemo && !isObs && !estCandidat && statutPv !== 'annulé' && statutPv !== 'pourvu'
     && ['vacant', 'candidature'].includes(statutPv);
   const listeCandidats = candidats.length
     ? `<ul class="candidats-liste">${candidats.map((c) => `<li>${escapeHtml(c.nom_complet || c.nom || c.username || '')}</li>`).join('')}</ul>`
@@ -2202,6 +2226,9 @@ async function enregistrerTransaction() {
 async function soumettreFluxFinancier(event) {
   event.preventDefault();
 
+  const submitBtn = event.target?.querySelector?.('button[type="submit"]');
+  if (submitBtn?.disabled) return;
+
   const flow = document.getElementById('txn-flow-type')?.value || '';
 
   if (flow === 'cotisation_manuelle') {
@@ -2222,6 +2249,7 @@ async function soumettreFluxFinancier(event) {
       return;
     }
     try {
+      if (submitBtn) submitBtn.disabled = true;
       const data = await apiFetch('/api/cotisations', {
         method: 'POST',
         body: JSON.stringify({ member_id: memberId, montant, mode }),
@@ -2238,6 +2266,8 @@ async function soumettreFluxFinancier(event) {
       }
     } catch (error) {
       alert(error.message || 'Enregistrement impossible.');
+    } finally {
+      if (submitBtn) submitBtn.disabled = false;
     }
     return;
   }
@@ -2276,6 +2306,7 @@ async function soumettreFluxFinancier(event) {
   }
 
   try {
+    if (submitBtn) submitBtn.disabled = true;
     await submitTransactionPayload(payload);
     event.target.reset();
     document.getElementById('txn-flow-type').value = '';
@@ -2283,8 +2314,9 @@ async function soumettreFluxFinancier(event) {
     document.getElementById('transaction-form')?.classList.add('hidden');
   } catch (error) {
     alert(error.message || 'Enregistrement impossible.');
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
   }
-}
 
 async function submitTransactionPayload(payload) {
   const data = await apiFetch('/api/transactions', {
@@ -2316,7 +2348,8 @@ async function flushPendingTransactions() {
   const pending = getPendingTransactions();
   if (!pending.length) return;
   if (!checkPermission('createTransaction', currentUser?.role)) {
-    showPermissionError('createTransaction', currentUser?.role);
+    sessionStorage.removeItem(PENDING_TRANSACTIONS_KEY);
+    updateNetworkStatus();
     return;
   }
 
@@ -2380,9 +2413,13 @@ async function suggererOperation() {
 
 async function voter(voteId, choix) {
   if (!currentUser?.permissions.canVote) {
-    alert('Seuls les membres peuvent voter.');
+    alert('Votre rôle ne permet pas de participer à ce vote.');
     return;
   }
+
+  const flightKey = String(voteId);
+  if (voteSubmissionInFlight.has(flightKey)) return;
+  voteSubmissionInFlight.add(flightKey);
 
   try {
     await apiFetch(`/api/votes/${voteId}/vote`, {
@@ -2393,6 +2430,8 @@ async function voter(voteId, choix) {
     await chargerVotes();
   } catch (error) {
     alert(error.message || 'Vote refuse.');
+  } finally {
+    voteSubmissionInFlight.delete(flightKey);
   }
 }
 
@@ -2401,6 +2440,9 @@ async function cloturerVote(voteId) {
   if (!currentUser?.permissions.isAdmin && !bureau) {
     return;
   }
+  const flightKey = `close-${voteId}`;
+  if (voteSubmissionInFlight.has(flightKey)) return;
+  voteSubmissionInFlight.add(flightKey);
   try {
     await apiFetch(`/api/votes/${voteId}/close`, {
       method: 'POST',
@@ -2410,6 +2452,8 @@ async function cloturerVote(voteId) {
     await chargerVotes();
   } catch (error) {
     alert(error.message || 'Clôture impossible.');
+  } finally {
+    voteSubmissionInFlight.delete(flightKey);
   }
 }
 
@@ -2542,7 +2586,11 @@ async function configurerCoop(event) {
     return;
   }
 
+  const submitBtn = event.target?.querySelector?.('button[type="submit"]');
+  if (submitBtn?.disabled) return;
+
   try {
+    if (submitBtn) submitBtn.disabled = true;
     const data = await apiFetch('/api/config/init', {
       method: 'POST',
       body: JSON.stringify({
@@ -2559,6 +2607,8 @@ async function configurerCoop(event) {
     showPage('setup-members');
   } catch (error) {
     alert(error.message || 'Configuration impossible.');
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
   }
 }
 
@@ -2576,7 +2626,11 @@ async function creerMembreAdmin(event) {
     return;
   }
 
+  const submitBtn = event.target?.querySelector?.('button[type="submit"]');
+  if (submitBtn?.disabled) return;
+
   try {
+    if (submitBtn) submitBtn.disabled = true;
     await apiFetch('/api/members/create', {
       method: 'POST',
       body: JSON.stringify({
@@ -2593,6 +2647,8 @@ async function creerMembreAdmin(event) {
     alert('Membre ajoute.');
   } catch (error) {
     alert(error.message || 'Creation impossible.');
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
   }
 }
 
