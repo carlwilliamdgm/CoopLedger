@@ -1071,6 +1071,18 @@ function installExtraNavItems() {
       if (page) showPage(page, item);
     });
   });
+
+  const footer = document.querySelector('.sidebar-footer');
+  if (footer && !footer.querySelector('.feedback-link')) {
+    footer.insertAdjacentHTML('beforeend', `
+    <a href="https://forms.gle/iwLacKG18PWNWtt97" 
+       target="_blank" 
+       rel="noreferrer" 
+       class="feedback-link">
+      💬 Donner mon avis
+    </a>
+  `);
+  }
 }
 
 function installStartupPages() {
