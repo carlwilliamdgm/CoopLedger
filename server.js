@@ -1550,17 +1550,11 @@ async function initierFedapay(req, res) {
   if (!apiKey) {
     throw new HttpError(500, 'FEDAPAY_SERVER_KEY manquant.');
   }
-  const baseUrl = cleanString(process.env.PUBLIC_BASE_URL).replace(/\/$/, '');
-  const proto = cleanString(req.headers['x-forwarded-proto']).split(',')[0] || 'http';
-  const callbackUrl = baseUrl
-    ? `${baseUrl}/paiement-retour`
-    : `${proto}://${req.headers.host}/paiement-retour`;
-
   const response = await postJson(FEDAPAY_TRANSACTION_ENDPOINT, {
     description: 'Cotisation CoopLedger',
     amount,
     currency: { iso: 'XOF' },
-    callback_url: callbackUrl,
+    callback_url: `${process.env.APP_URL || 'https://coopledger-demo.up.railway.app'}/api/cotisations/webhook`,
     metadata: { member_id: req.user.id },
   }, {
     Authorization: `Bearer ${apiKey}`,
