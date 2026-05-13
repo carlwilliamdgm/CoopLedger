@@ -2317,6 +2317,7 @@ async function soumettreFluxFinancier(event) {
   } finally {
     if (submitBtn) submitBtn.disabled = false;
   }
+}
 
 async function submitTransactionPayload(payload) {
   const data = await apiFetch('/api/transactions', {
