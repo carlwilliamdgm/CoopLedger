@@ -1585,7 +1585,7 @@ function timingSafeCompare(valueA, valueB) {
 }
 
 function verifyFedapaySignature(rawSignature, rawBody) {
-  const secret = process.env.FEDAPAY_SECRET;
+  const secret = process.env.FEDAPAY_WEBHOOK_SECRET;
   if (!secret || !rawSignature) {
     return false;
   }
