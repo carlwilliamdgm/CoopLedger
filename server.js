@@ -85,6 +85,10 @@ function getFedapayTransactionsEndpoint() {
   return `${base.replace(/\/$/, '')}/v1/transactions`;
 }
 
+function getFedapayTransactionTokenEndpoint(transactionId) {
+  return `${getFedapayTransactionsEndpoint()}/${encodeURIComponent(transactionId)}/token`;
+}
+
 /** @returns {[number, number]} */
 function fedapayAdvisoryLockKeys(fedapayTransactionId) {
   const buf = crypto.createHash('sha256').update(String(fedapayTransactionId), 'utf8').digest();
@@ -95,7 +99,7 @@ function extractFedapayTransactionId(payload) {
   if (!payload || typeof payload !== 'object') {
     return null;
   }
-  const tx = payload.transaction || payload['v1/transaction'] || payload.data?.transaction;
+  const tx = payload.transaction || payload['v1/transaction'] || payload.entity || payload.data?.entity || payload.data?.transaction;
   const raw =
     tx?.id
     ?? payload.transaction_id
@@ -107,6 +111,38 @@ function extractFedapayTransactionId(payload) {
   }
   const s = String(raw).trim();
   return s || null;
+}
+
+function extractFedapayTransaction(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+  return payload['v1/transaction']
+    || payload.transaction
+    || payload.entity
+    || payload.data?.entity
+    || payload.data?.transaction
+    || payload.data
+    || payload;
+}
+
+function buildFedapayCustomer(user) {
+  const email = cleanString(user?.email);
+  if (!email) {
+    return null;
+  }
+
+  const nom = cleanString(user?.nom);
+  if (!nom) {
+    return { email };
+  }
+
+  const parts = nom.split(/\s+/).filter(Boolean);
+  return {
+    email,
+    firstname: parts[0] || nom,
+    lastname: parts.slice(1).join(' ') || parts[0] || nom,
+  };
 }
 
 const mimeTypes = {
@@ -198,7 +234,8 @@ function readRawBody(req) {
 
 function postJson(url, payload, headers = {}) {
   return new Promise((resolve, reject) => {
-    const body = JSON.stringify(payload);
+    const hasBody = payload !== undefined;
+    const body = hasBody ? JSON.stringify(payload) : '';
     const parsedUrl = new URL(url);
     const options = {
       hostname: parsedUrl.hostname,
@@ -206,8 +243,8 @@ function postJson(url, payload, headers = {}) {
       path: parsedUrl.pathname + (parsedUrl.search || ''),
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(body),
+        ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
         ...headers,
       },
     };
@@ -227,7 +264,9 @@ function postJson(url, payload, headers = {}) {
     });
 
     req.on('error', reject);
-    req.write(body);
+    if (body) {
+      req.write(body);
+    }
     req.end();
   });
 }
@@ -1580,38 +1619,87 @@ async function initierFedapay(req, res) {
   }
   const proto = cleanString(req.headers['x-forwarded-proto']).split(',')[0] || 'http';
   const appBaseUrl = (cleanString(process.env.APP_URL) || `${proto}://${req.headers.host}`).replace(/\/+$/, '');
-  const response = await postJson(getFedapayTransactionsEndpoint(), {
+  const metadata = { member_id: req.user.id };
+  const customer = buildFedapayCustomer(req.user);
+  const transactionPayload = {
     description: 'Cotisation CoopLedger',
     amount,
     currency: { iso: 'XOF' },
     callback_url: `${appBaseUrl}/paiement-retour`,
-    metadata: { member_id: req.user.id },
-  }, {
-    Authorization: `Bearer ${apiKey}`,
-  });
-  console.log('FedaPay API response:', JSON.stringify(response, null, 2));
-
-  const data = response.data;
-  if (!response.ok) {
-    throw new HttpError(response.status, data.error || 'Erreur lors de la creation de la transaction FedaPay.');
+    custom_metadata: metadata,
+  };
+  if (customer) {
+    transactionPayload.customer = customer;
   }
 
-  const txData = data['v1/transaction'];
-  const token = txData?.payment_token || txData?.token;
-  const paymentUrl = txData?.payment_url;
+  const createResponse = await postJson(getFedapayTransactionsEndpoint(), transactionPayload, {
+    Authorization: `Bearer ${apiKey}`,
+  });
+  console.log('FedaPay API response:', JSON.stringify(createResponse, null, 2));
 
-  if (!token) {
-    sendJson(res, 502, { error: 'Token FedaPay absent' });
+  const createData = createResponse.data;
+  if (!createResponse.ok) {
+    throw new HttpError(createResponse.status, createData.error || 'Erreur lors de la creation de la transaction FedaPay.');
+  }
+
+  const txData = extractFedapayTransaction(createData);
+  const fedapayTransactionId = txData?.id;
+  if (!fedapayTransactionId) {
+    sendJson(res, 502, { error: 'Identifiant de transaction FedaPay absent' });
     return;
   }
 
-  sendJson(res, 200, { token, url: paymentUrl });
+  const tokenResponse = await postJson(getFedapayTransactionTokenEndpoint(fedapayTransactionId), undefined, {
+    Authorization: `Bearer ${apiKey}`,
+  });
+  console.log('FedaPay token API response:', JSON.stringify(tokenResponse, null, 2));
+
+  const tokenData = tokenResponse.data;
+  if (!tokenResponse.ok) {
+    throw new HttpError(tokenResponse.status, tokenData.error || 'Erreur lors de la generation du lien FedaPay.');
+  }
+
+  const token = tokenData.token || tokenData['v1/token']?.token || tokenData.data?.token;
+  const paymentUrl = tokenData.url || tokenData['v1/token']?.url || tokenData.data?.url;
+
+  if (!token || !paymentUrl) {
+    sendJson(res, 502, { error: 'Lien de paiement FedaPay absent' });
+    return;
+  }
+
+  sendJson(res, 200, { token, url: paymentUrl, transaction_id: fedapayTransactionId });
 }
 
 function timingSafeCompare(valueA, valueB) {
   const bufA = Buffer.from(String(valueA), 'utf8');
   const bufB = Buffer.from(String(valueB), 'utf8');
   return bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB);
+}
+
+function parseFedapaySignatureHeader(rawSignature) {
+  const signature = cleanString(rawSignature);
+  if (!signature) {
+    return null;
+  }
+
+  if (!signature.includes(',')) {
+    return { timestamp: null, signatures: [signature.replace(/^sha256=/i, '')] };
+  }
+
+  const details = { timestamp: null, signatures: [] };
+  signature.split(',').forEach((item) => {
+    const [rawKey, ...rawValueParts] = item.split('=');
+    const key = cleanString(rawKey);
+    const value = cleanString(rawValueParts.join('='));
+    if (key === 't') {
+      details.timestamp = Number.parseInt(value, 10);
+    }
+    if (key === 's' || key === 'sha256' || key === 'v1') {
+      details.signatures.push(value);
+    }
+  });
+
+  return details;
 }
 
 function verifyFedapaySignature(rawSignature, rawBody) {
@@ -1622,14 +1710,33 @@ function verifyFedapaySignature(rawSignature, rawBody) {
     return false;
   }
 
-  const actualSignature = cleanString(rawSignature).replace(/^sha256=/i, '');
-  const hmac = crypto.createHmac('sha256', secret).update(rawBody);
+  const details = parseFedapaySignatureHeader(rawSignature);
+  if (!details || !details.signatures.length) {
+    console.log('FedaPay webhook signature received:', rawSignature || '');
+    console.log('FedaPay webhook signature computed:', '');
+    return false;
+  }
+
+  const signedPayload = Number.isInteger(details.timestamp)
+    ? `${details.timestamp}.${rawBody}`
+    : rawBody;
+  const hmac = crypto.createHmac('sha256', secret).update(signedPayload, 'utf8');
   const expectedHex = hmac.digest('hex');
   const expectedBase64 = Buffer.from(expectedHex, 'hex').toString('base64');
-  console.log('FedaPay webhook signature received:', actualSignature);
+  console.log('FedaPay webhook signature received:', details.signatures.join(','));
   console.log('FedaPay webhook signature computed:', expectedHex);
 
-  return timingSafeCompare(actualSignature, expectedHex) || timingSafeCompare(actualSignature, expectedBase64);
+  if (Number.isInteger(details.timestamp)) {
+    const timestampAge = Math.floor(Date.now() / 1000) - details.timestamp;
+    if (timestampAge > 300) {
+      console.log('FedaPay webhook signature timestamp age:', timestampAge);
+      return false;
+    }
+  }
+
+  return details.signatures.some((signature) => (
+    timingSafeCompare(signature, expectedHex) || timingSafeCompare(signature, expectedBase64)
+  ));
 }
 
 async function listCandidatures(req, res) {
@@ -1916,7 +2023,8 @@ async function fedapayWebhook(req, res) {
     throw new HttpError(401, 'Signature invalide.');
   }
 
-  const status = cleanString(payload.status || payload.statut || payload.transaction?.status).toLowerCase();
+  const transactionPayload = extractFedapayTransaction(payload) || {};
+  const status = cleanString(payload.status || payload.statut || transactionPayload.status).toLowerCase();
 
   if (!['approved', 'confirmed', 'confirmé', 'confirme', 'paid', 'transferred', 'transfer'].includes(status)) {
     sendJson(res, 202, { success: true, ignored: true });
@@ -1929,10 +2037,14 @@ async function fedapayWebhook(req, res) {
   }
 
   const memberId = parsePositiveInteger(
-    payload.metadata?.member_id || payload.member_id || payload.transaction?.metadata?.member_id,
+    payload.metadata?.member_id
+      || payload.custom_metadata?.member_id
+      || payload.member_id
+      || transactionPayload.metadata?.member_id
+      || transactionPayload.custom_metadata?.member_id,
     'member_id',
   );
-  const amount = parsePositiveInteger(payload.montant || payload.amount || payload.transaction?.amount, 'montant');
+  const amount = parsePositiveInteger(payload.montant || payload.amount || transactionPayload.amount, 'montant');
 
   const [lockK1, lockK2] = fedapayAdvisoryLockKeys(fedapayTxId);
   const client = await pool.connect();
