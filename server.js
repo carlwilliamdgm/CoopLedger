@@ -1578,15 +1578,18 @@ async function initierFedapay(req, res) {
   if (!apiKey) {
     throw new HttpError(500, 'FEDAPAY_SERVER_KEY manquant.');
   }
+  const proto = cleanString(req.headers['x-forwarded-proto']).split(',')[0] || 'http';
+  const appBaseUrl = (cleanString(process.env.APP_URL) || `${proto}://${req.headers.host}`).replace(/\/+$/, '');
   const response = await postJson(getFedapayTransactionsEndpoint(), {
     description: 'Cotisation CoopLedger',
     amount,
     currency: { iso: 'XOF' },
-    callback_url: `${process.env.APP_URL || 'https://coopledger-demo.up.railway.app'}/api/cotisations/webhook`,
+    callback_url: `${appBaseUrl}/paiement-retour`,
     metadata: { member_id: req.user.id },
   }, {
     Authorization: `Bearer ${apiKey}`,
   });
+  console.log('FedaPay API response:', JSON.stringify(response, null, 2));
 
   const data = response.data;
   if (!response.ok) {
@@ -1612,8 +1615,10 @@ function timingSafeCompare(valueA, valueB) {
 }
 
 function verifyFedapaySignature(rawSignature, rawBody) {
-  const secret = process.env.FEDAPAY_WEBHOOK_SECRET;
+  const secret = process.env.FEDAPAY_WEBHOOK_SECRET || process.env.FEDAPAY_SECRET;
   if (!secret || !rawSignature) {
+    console.log('FedaPay webhook signature received:', rawSignature || '');
+    console.log('FedaPay webhook signature computed:', '');
     return false;
   }
 
@@ -1621,6 +1626,8 @@ function verifyFedapaySignature(rawSignature, rawBody) {
   const hmac = crypto.createHmac('sha256', secret).update(rawBody);
   const expectedHex = hmac.digest('hex');
   const expectedBase64 = Buffer.from(expectedHex, 'hex').toString('base64');
+  console.log('FedaPay webhook signature received:', actualSignature);
+  console.log('FedaPay webhook signature computed:', expectedHex);
 
   return timingSafeCompare(actualSignature, expectedHex) || timingSafeCompare(actualSignature, expectedBase64);
 }
@@ -1894,20 +1901,24 @@ async function fedapayWebhook(req, res) {
   const rawBody = await readRawBody(req);
   const signatureHeader = req.headers['x-fedapay-signature'] || req.headers['x-fedapay-signature-256'] || req.headers['x-fp-signature'] || req.headers['x-fedapay-signaturesha256'];
 
-  if (!verifyFedapaySignature(signatureHeader, rawBody)) {
-    throw new HttpError(401, 'Signature invalide.');
-  }
-
   let payload;
   try {
     payload = rawBody ? JSON.parse(rawBody) : {};
   } catch {
     throw new HttpError(400, 'JSON du webhook invalide.');
   }
+  console.log('FedaPay webhook headers:', JSON.stringify(req.headers, null, 2));
+  console.log('FedaPay webhook payload:', JSON.stringify(payload, null, 2));
+
+  const signatureValid = verifyFedapaySignature(signatureHeader, rawBody);
+  console.log('FedaPay webhook signature valid:', signatureValid);
+  if (!signatureValid) {
+    throw new HttpError(401, 'Signature invalide.');
+  }
 
   const status = cleanString(payload.status || payload.statut || payload.transaction?.status).toLowerCase();
 
-  if (!['approved', 'confirmed', 'confirmé', 'confirme', 'paid'].includes(status)) {
+  if (!['approved', 'confirmed', 'confirmé', 'confirme', 'paid', 'transferred', 'transfer'].includes(status)) {
     sendJson(res, 202, { success: true, ignored: true });
     return;
   }
@@ -1917,7 +1928,10 @@ async function fedapayWebhook(req, res) {
     throw new HttpError(400, 'Identifiant de transaction FedaPay manquant dans le webhook.');
   }
 
-  const memberId = parsePositiveInteger(payload.member_id || payload.metadata?.member_id, 'member_id');
+  const memberId = parsePositiveInteger(
+    payload.metadata?.member_id || payload.member_id || payload.transaction?.metadata?.member_id,
+    'member_id',
+  );
   const amount = parsePositiveInteger(payload.montant || payload.amount || payload.transaction?.amount, 'montant');
 
   const [lockK1, lockK2] = fedapayAdvisoryLockKeys(fedapayTxId);
@@ -2842,7 +2856,8 @@ async function routeApi(req, res, pathname) {
   if (req.method === 'POST' && pathname === '/api/cotisations') return createCotisation(req, res);
   if (req.method === 'POST' && pathname === '/api/fedapay/initier') return initierFedapay(req, res);
   if (req.method === 'GET' && pathname === '/api/fedapay/public-key') return getFedapayPublicKey(req, res);
-  if (req.method === 'POST' && pathname === '/api/cotisations/webhook') return fedapayWebhook(req, res);
+  const webhookPathname = pathname.replace(/\/+$/, '') || '/';
+  if (req.method === 'POST' && webhookPathname === '/api/cotisations/webhook') return fedapayWebhook(req, res);
   if (req.method === 'GET' && pathname === '/api/cotisations/me') return myCotisations(req, res);
 
   if (req.method === 'GET' && pathname === '/api/notifications/stream') return notificationStream(req, res);
