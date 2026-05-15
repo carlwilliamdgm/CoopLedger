@@ -89,6 +89,10 @@ function getFedapayTransactionTokenEndpoint(transactionId) {
   return `${getFedapayTransactionsEndpoint()}/${encodeURIComponent(transactionId)}/token`;
 }
 
+function getFedapayTransactionEndpoint(transactionId) {
+  return `${getFedapayTransactionsEndpoint()}/${encodeURIComponent(transactionId)}`;
+}
+
 /** @returns {[number, number]} */
 function fedapayAdvisoryLockKeys(fedapayTransactionId) {
   const buf = crypto.createHash('sha256').update(String(fedapayTransactionId), 'utf8').digest();
@@ -267,6 +271,36 @@ function postJson(url, payload, headers = {}) {
     if (body) {
       req.write(body);
     }
+    req.end();
+  });
+}
+
+function getJson(url, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const parsedUrl = new URL(url);
+    const options = {
+      hostname: parsedUrl.hostname,
+      port: parsedUrl.port || 443,
+      path: parsedUrl.pathname + (parsedUrl.search || ''),
+      method: 'GET',
+      headers,
+    };
+
+    const req = https.request(options, (res) => {
+      let responseBody = '';
+      res.on('data', (chunk) => { responseBody += chunk; });
+      res.on('end', () => {
+        let data = {};
+        try {
+          data = responseBody ? JSON.parse(responseBody) : {};
+        } catch (err) {
+          return reject(new HttpError(502, 'Reponse invalide de FedaPay.'));
+        }
+        resolve({ status: res.statusCode || 0, ok: res.statusCode >= 200 && res.statusCode < 300, data });
+      });
+    });
+
+    req.on('error', reject);
     req.end();
   });
 }
@@ -1739,6 +1773,26 @@ function verifyFedapaySignature(rawSignature, rawBody) {
   ));
 }
 
+async function fetchFedapayTransactionForWebhook(fedapayTransactionId) {
+  const apiKey = cleanString(process.env.FEDAPAY_SERVER_KEY);
+  if (!apiKey || !fedapayTransactionId) {
+    return null;
+  }
+
+  const response = await getJson(getFedapayTransactionEndpoint(fedapayTransactionId), {
+    Authorization: `Bearer ${apiKey}`,
+  }).catch((err) => {
+    console.error('FedaPay transaction verification failed:', err);
+    return null;
+  });
+  console.log('FedaPay transaction verification response:', JSON.stringify(response, null, 2));
+  if (!response || !response.ok) {
+    return null;
+  }
+
+  return extractFedapayTransaction(response.data);
+}
+
 async function listCandidatures(req, res) {
   await requireAuth(req, res);
   const memberId = Number(req.user.id);
@@ -2019,21 +2073,31 @@ async function fedapayWebhook(req, res) {
 
   const signatureValid = verifyFedapaySignature(signatureHeader, rawBody);
   console.log('FedaPay webhook signature valid:', signatureValid);
-  if (!signatureValid) {
-    throw new HttpError(401, 'Signature invalide.');
-  }
-
-  const transactionPayload = extractFedapayTransaction(payload) || {};
-  const status = cleanString(payload.status || payload.statut || transactionPayload.status).toLowerCase();
-
-  if (!['approved', 'confirmed', 'confirmé', 'confirme', 'paid', 'transferred', 'transfer'].includes(status)) {
-    sendJson(res, 202, { success: true, ignored: true });
-    return;
-  }
 
   const fedapayTxId = extractFedapayTransactionId(payload);
   if (!fedapayTxId) {
-    throw new HttpError(400, 'Identifiant de transaction FedaPay manquant dans le webhook.');
+    console.warn('FedaPay webhook ignore: identifiant de transaction manquant.');
+    sendJson(res, 200, { success: true, ignored: true, reason: 'missing_transaction_id' });
+    return;
+  }
+
+  let transactionPayload = extractFedapayTransaction(payload) || {};
+  if (!signatureValid) {
+    console.warn('FedaPay webhook signature invalide; verification de secours via API FedaPay.');
+    const verifiedTransaction = await fetchFedapayTransactionForWebhook(fedapayTxId);
+    if (!verifiedTransaction) {
+      console.warn('FedaPay webhook ignore: transaction non verifiable via API FedaPay.');
+      sendJson(res, 200, { success: true, ignored: true, reason: 'invalid_signature' });
+      return;
+    }
+    transactionPayload = verifiedTransaction;
+  }
+
+  const status = cleanString(transactionPayload.status || payload.status || payload.statut).toLowerCase();
+
+  if (!['approved', 'confirmed', 'confirmé', 'confirme', 'paid', 'transferred', 'transfer'].includes(status)) {
+    sendJson(res, 200, { success: true, ignored: true, status });
+    return;
   }
 
   const memberId = parsePositiveInteger(
