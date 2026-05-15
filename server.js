@@ -78,8 +78,36 @@ function notificationMatchesDestinataires(userRole, destinataires) {
 const BUREAU_POSTES = ['president', 'tresorier', 'secretaire', 'verificateur'];
 const CONFIG_KEYS_EDITABLE = ['nom_coop', 'duree_mandat', 'duree_inactivite_mois'];
 const CONFIG_KEYS_SECRET = new Set(['stellar_secret_key', 'cle_unique']);
-const FEDAPAY_TRANSACTION_ENDPOINT = 'https://sandbox-api.fedapay.com/v1/transactions';
 const ALLOWED_MEMBER_ROLES = ['president', 'tresorier', 'secretaire', 'verificateur', 'membre', 'observateur', 'admin'];
+
+function getFedapayTransactionsEndpoint() {
+  const base = cleanString(process.env.FEDAPAY_API_BASE_URL) || 'https://sandbox-api.fedapay.com';
+  return `${base.replace(/\/$/, '')}/v1/transactions`;
+}
+
+/** @returns {[number, number]} */
+function fedapayAdvisoryLockKeys(fedapayTransactionId) {
+  const buf = crypto.createHash('sha256').update(String(fedapayTransactionId), 'utf8').digest();
+  return [buf.readUInt32BE(0), buf.readUInt32BE(4)];
+}
+
+function extractFedapayTransactionId(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+  const tx = payload.transaction || payload['v1/transaction'] || payload.data?.transaction;
+  const raw =
+    tx?.id
+    ?? payload.transaction_id
+    ?? payload.data?.id
+    ?? payload.id
+    ?? payload.event?.data?.transaction?.id;
+  if (raw === null || raw === undefined) {
+    return null;
+  }
+  const s = String(raw).trim();
+  return s || null;
+}
 
 const mimeTypes = {
   '.html': 'text/html; charset=utf-8',
@@ -1550,7 +1578,7 @@ async function initierFedapay(req, res) {
   if (!apiKey) {
     throw new HttpError(500, 'FEDAPAY_SERVER_KEY manquant.');
   }
-  const response = await postJson(FEDAPAY_TRANSACTION_ENDPOINT, {
+  const response = await postJson(getFedapayTransactionsEndpoint(), {
     description: 'Cotisation CoopLedger',
     amount,
     currency: { iso: 'XOF' },
@@ -1561,7 +1589,6 @@ async function initierFedapay(req, res) {
   });
 
   const data = response.data;
-  console.log('FedaPay response:', JSON.stringify(data));
   if (!response.ok) {
     throw new HttpError(response.status, data.error || 'Erreur lors de la creation de la transaction FedaPay.');
   }
@@ -1871,7 +1898,13 @@ async function fedapayWebhook(req, res) {
     throw new HttpError(401, 'Signature invalide.');
   }
 
-  const payload = rawBody ? JSON.parse(rawBody) : {};
+  let payload;
+  try {
+    payload = rawBody ? JSON.parse(rawBody) : {};
+  } catch {
+    throw new HttpError(400, 'JSON du webhook invalide.');
+  }
+
   const status = cleanString(payload.status || payload.statut || payload.transaction?.status).toLowerCase();
 
   if (!['approved', 'confirmed', 'confirmé', 'confirme', 'paid'].includes(status)) {
@@ -1879,45 +1912,65 @@ async function fedapayWebhook(req, res) {
     return;
   }
 
+  const fedapayTxId = extractFedapayTransactionId(payload);
+  if (!fedapayTxId) {
+    throw new HttpError(400, 'Identifiant de transaction FedaPay manquant dans le webhook.');
+  }
+
   const memberId = parsePositiveInteger(payload.member_id || payload.metadata?.member_id, 'member_id');
   const amount = parsePositiveInteger(payload.montant || payload.amount || payload.transaction?.amount, 'montant');
 
-  const memberRes = await pool.query('SELECT nom FROM members WHERE id = $1', [memberId]);
-  const nomMembre = cleanString(memberRes.rows[0]?.nom) || `membre_${memberId}`;
-  const libelleStellar = `Cotisation_FedaPay_${nomMembre.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '_')}_${memberId}`;
-
-  let stellar;
+  const [lockK1, lockK2] = fedapayAdvisoryLockKeys(fedapayTxId);
+  const client = await pool.connect();
   try {
-    stellar = await transactionService.enregistrerTransaction(libelleStellar, amount);
-  } catch (err) {
-    console.error(err);
-    throw new HttpError(502, 'Echec du scellement Stellar.');
+    await client.query('SELECT pg_advisory_lock($1, $2)', [lockK1, lockK2]);
+
+    const existing = await client.query('SELECT * FROM cotisations WHERE fedapay_transaction_id = $1', [fedapayTxId]);
+    if (existing.rowCount > 0) {
+      sendJson(res, 200, { duplicate: true, cotisation: existing.rows[0] });
+      return;
+    }
+
+    const memberRes = await client.query('SELECT nom FROM members WHERE id = $1', [memberId]);
+    const nomMembre = cleanString(memberRes.rows[0]?.nom) || `membre_${memberId}`;
+    const libelleStellar = `Cotisation_FedaPay_${nomMembre.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '_')}_${memberId}`;
+
+    let stellar;
+    try {
+      stellar = await transactionService.enregistrerTransaction(libelleStellar, amount);
+    } catch (err) {
+      console.error(err);
+      throw new HttpError(502, 'Echec du scellement Stellar.');
+    }
+
+    const result = await client.query(
+      `INSERT INTO cotisations (member_id, montant, mode, statut, hash, explorer, fedapay_transaction_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [memberId, amount, 'FedaPay', 'confirmé', stellar.hash, stellar.explorer, fedapayTxId],
+    );
+
+    const cot = result.rows[0];
+    const txId = `cot_${cot.id}`;
+    const libelleTx = `Cotisation (FedaPay) — ${nomMembre}`;
+    await client.query(
+      `INSERT INTO transactions (id, libelle, montant, type, hash, explorer, member_id, vote_id)
+       VALUES ($1, $2, $3, 'cotisation', $4, $5, $6, NULL)
+       ON CONFLICT (id) DO NOTHING`,
+      [txId, libelleTx, amount, stellar.hash, stellar.explorer, memberId],
+    );
+
+    await createNotification('Cotisation FedaPay confirmee.', 'cotisation', 'tresorier,secretaire');
+    await createNotification(
+      'Votre paiement a été confirmé et scellé sur la blockchain.',
+      'paiement_confirme',
+      'tous',
+    );
+    sendJson(res, 201, { cotisation: result.rows[0] });
+  } finally {
+    await client.query('SELECT pg_advisory_unlock($1, $2)', [lockK1, lockK2]).catch(() => {});
+    client.release();
   }
-
-  const result = await pool.query(
-    `INSERT INTO cotisations (member_id, montant, mode, statut, hash, explorer)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING *`,
-    [memberId, amount, 'FedaPay', 'confirmé', stellar.hash, stellar.explorer]
-  );
-
-  const cot = result.rows[0];
-  const txId = `cot_${cot.id}`;
-  const libelleTx = `Cotisation (FedaPay) — ${nomMembre}`;
-  await pool.query(
-    `INSERT INTO transactions (id, libelle, montant, type, hash, explorer, member_id, vote_id)
-     VALUES ($1, $2, $3, 'cotisation', $4, $5, $6, NULL)
-     ON CONFLICT (id) DO NOTHING`,
-    [txId, libelleTx, amount, stellar.hash, stellar.explorer, memberId],
-  );
-
-  await createNotification('Cotisation FedaPay confirmee.', 'cotisation', 'tresorier,secretaire');
-  await createNotification(
-    'Votre paiement a été confirmé et scellé sur la blockchain.',
-    'paiement_confirme',
-    'tous',
-  );
-  sendJson(res, 201, { cotisation: result.rows[0] });
 }
 
 async function myCotisations(req, res) {

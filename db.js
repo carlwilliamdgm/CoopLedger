@@ -99,6 +99,11 @@ async function initDatabase() {
 
     ALTER TABLE cotisations ADD COLUMN IF NOT EXISTS hash TEXT;
     ALTER TABLE cotisations ADD COLUMN IF NOT EXISTS explorer TEXT;
+    ALTER TABLE cotisations ADD COLUMN IF NOT EXISTS fedapay_transaction_id TEXT;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS cotisations_fedapay_transaction_id_idx
+      ON cotisations (fedapay_transaction_id)
+      WHERE fedapay_transaction_id IS NOT NULL;
 
     CREATE TABLE IF NOT EXISTS push_subscriptions (
       id SERIAL PRIMARY KEY,
