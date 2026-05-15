@@ -1847,6 +1847,56 @@ async function processFedapayCotisation(fedapayTxId, memberId, amount) {
   }
 }
 
+async function processFedapayWebhookPayload(payload, signatureHeader, rawBody) {
+  console.log('FedaPay webhook payload:', JSON.stringify(payload, null, 2));
+
+  const signatureValid = verifyFedapaySignature(signatureHeader, rawBody);
+  console.log('FedaPay webhook signature valid:', signatureValid);
+
+  const fedapayTxId = extractFedapayTransactionId(payload);
+  if (!fedapayTxId) {
+    console.warn('FedaPay webhook ignore: identifiant de transaction manquant.');
+    return;
+  }
+
+  let transactionPayload = extractFedapayTransaction(payload) || {};
+  if (!signatureValid) {
+    console.warn('FedaPay webhook signature invalide; verification de secours via API FedaPay.');
+    const verifiedTransaction = await fetchFedapayTransactionForWebhook(fedapayTxId);
+    if (!verifiedTransaction) {
+      console.warn('FedaPay webhook ignore: transaction non verifiable via API FedaPay.');
+      return;
+    }
+    transactionPayload = verifiedTransaction;
+  }
+
+  const status = cleanString(transactionPayload.status || payload.status || payload.statut).toLowerCase();
+
+  if (!['approved', 'confirmed', 'confirmé', 'confirme', 'paid', 'transferred', 'transfer'].includes(status)) {
+    console.log('FedaPay webhook ignore: statut non approuve.', status);
+    return;
+  }
+
+  let memberId;
+  let amount;
+  try {
+    memberId = parsePositiveInteger(
+      payload.metadata?.member_id
+        || payload.custom_metadata?.member_id
+        || payload.member_id
+        || transactionPayload.metadata?.member_id
+        || transactionPayload.custom_metadata?.member_id,
+      'member_id',
+    );
+    amount = parsePositiveInteger(payload.montant || payload.amount || transactionPayload.amount, 'montant');
+  } catch (err) {
+    console.warn('FedaPay webhook ignore: donnees de cotisation incompletes.', err.message);
+    return;
+  }
+
+  await processFedapayCotisation(fedapayTxId, memberId, amount);
+}
+
 async function listCandidatures(req, res) {
   await requireAuth(req, res);
   const memberId = Number(req.user.id);
@@ -2115,6 +2165,7 @@ async function prolongCandidatureElection(req, res, id) {
 async function fedapayWebhook(req, res) {
   const rawBody = await readRawBody(req);
   const signatureHeader = req.headers['x-fedapay-signature'] || req.headers['x-fedapay-signature-256'] || req.headers['x-fp-signature'] || req.headers['x-fedapay-signaturesha256'];
+  console.log('FedaPay webhook headers:', JSON.stringify(req.headers, null, 2));
 
   let payload;
   try {
@@ -2124,59 +2175,11 @@ async function fedapayWebhook(req, res) {
     sendJson(res, 200, { success: true, ignored: true, reason: 'invalid_json' });
     return;
   }
-  console.log('FedaPay webhook headers:', JSON.stringify(req.headers, null, 2));
-  console.log('FedaPay webhook payload:', JSON.stringify(payload, null, 2));
-
-  const signatureValid = verifyFedapaySignature(signatureHeader, rawBody);
-  console.log('FedaPay webhook signature valid:', signatureValid);
 
   const fedapayTxId = extractFedapayTransactionId(payload);
-  if (!fedapayTxId) {
-    console.warn('FedaPay webhook ignore: identifiant de transaction manquant.');
-    sendJson(res, 200, { success: true, ignored: true, reason: 'missing_transaction_id' });
-    return;
-  }
-
-  let transactionPayload = extractFedapayTransaction(payload) || {};
-  if (!signatureValid) {
-    console.warn('FedaPay webhook signature invalide; verification de secours via API FedaPay.');
-    const verifiedTransaction = await fetchFedapayTransactionForWebhook(fedapayTxId);
-    if (!verifiedTransaction) {
-      console.warn('FedaPay webhook ignore: transaction non verifiable via API FedaPay.');
-      sendJson(res, 200, { success: true, ignored: true, reason: 'invalid_signature' });
-      return;
-    }
-    transactionPayload = verifiedTransaction;
-  }
-
-  const status = cleanString(transactionPayload.status || payload.status || payload.statut).toLowerCase();
-
-  if (!['approved', 'confirmed', 'confirmé', 'confirme', 'paid', 'transferred', 'transfer'].includes(status)) {
-    sendJson(res, 200, { success: true, ignored: true, status });
-    return;
-  }
-
-  let memberId;
-  let amount;
-  try {
-    memberId = parsePositiveInteger(
-      payload.metadata?.member_id
-        || payload.custom_metadata?.member_id
-        || payload.member_id
-        || transactionPayload.metadata?.member_id
-        || transactionPayload.custom_metadata?.member_id,
-      'member_id',
-    );
-    amount = parsePositiveInteger(payload.montant || payload.amount || transactionPayload.amount, 'montant');
-  } catch (err) {
-    console.warn('FedaPay webhook ignore: donnees de cotisation incompletes.', err.message);
-    sendJson(res, 200, { success: true, ignored: true, reason: 'invalid_cotisation_data' });
-    return;
-  }
-
   sendJson(res, 200, { success: true, accepted: true, transaction_id: fedapayTxId });
   setImmediate(() => {
-    processFedapayCotisation(fedapayTxId, memberId, amount)
+    processFedapayWebhookPayload(payload, signatureHeader, rawBody)
       .catch((err) => console.error('Traitement asynchrone webhook FedaPay echoue:', err));
   });
 }
