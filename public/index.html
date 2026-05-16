@@ -30,7 +30,8 @@
           <span class="logo-coop">COOP</span><span class="logo-ledger">LEDGER</span>
         </div>
         <h1 data-i18n="auth.heroTitle">Connexion coopérative</h1>
-        <p data-i18n="auth.heroSubtitle">Identifiez-vous ou enregistrez-vous pour ouvrir une interface adaptée à votre rôle.</p>
+        <p data-i18n="auth.heroSubtitle">Identifiez-vous ou enregistrez-vous pour ouvrir une interface adaptée à votre
+          rôle.</p>
       </div>
 
       <div class="auth-grid">
@@ -53,7 +54,8 @@
           </div>
         </div>
 
-        <button type="button" class="demo-button auth-demo-btn" onclick="lancerDemo()" data-i18n="auth.launchDemo">Lancer la démo</button>
+        <button type="button" class="demo-button auth-demo-btn" onclick="lancerDemo()"
+          data-i18n="auth.launchDemo">Lancer la démo</button>
 
         <form class="auth-panel" onsubmit="enregistrerProfil(event)">
           <p class="panel-label" data-i18n="auth.registerPanel">Nouvel accès membre</p>
@@ -95,11 +97,14 @@
           <span id="profile-role">-</span>
           <p id="profile-description">-</p>
         </div>
-        <button type="button" class="logout-button" onclick="deconnecter()" data-i18n="shell.switchProfile">Changer de profil</button>
+        <button type="button" class="logout-button" onclick="deconnecter()" data-i18n="shell.switchProfile">Changer de
+          profil</button>
       </div>
       <nav>
-        <a href="#dashboard" class="nav-item active" data-page="dashboard"><span data-i18n="nav.dashboard">📊 Dashboard</span></a>
-        <a href="#transactions" class="nav-item" data-page="transactions"><span data-i18n="nav.transactions">📋 Transactions</span></a>
+        <a href="#dashboard" class="nav-item active" data-page="dashboard"><span data-i18n="nav.dashboard">📊
+            Dashboard</span></a>
+        <a href="#transactions" class="nav-item" data-page="transactions"><span data-i18n="nav.transactions">📋
+            Transactions</span></a>
         <a href="#vote" class="nav-item" data-page="vote"><span data-i18n="nav.vote">🗳️ Vote</span></a>
         <a href="#membres" class="nav-item" data-page="membres"><span data-i18n="nav.members">👥 Membres</span></a>
       </nav>
@@ -118,7 +123,8 @@
     <div class="main-content">
       <header class="mobile-nav-header">
         <button type="button" id="sidebar-toggle" class="sidebar-toggle" aria-controls="app-sidebar"
-          aria-expanded="false" data-i18n-aria-open="a11y.openMenu" data-i18n-aria-close="a11y.closeMenu" aria-label="Ouvrir le menu">
+          aria-expanded="false" data-i18n-aria-open="a11y.openMenu" data-i18n-aria-close="a11y.closeMenu"
+          aria-label="Ouvrir le menu">
           <span class="sidebar-toggle-bars" aria-hidden="true"></span>
         </button>
       </header>
@@ -177,7 +183,8 @@
       <div id="page-transactions" class="page">
         <div class="page-header">
           <h1 data-i18n="page.transactions.title">Historique des Transactions</h1>
-          <button id="new-transaction-btn" class="btn-primary" onclick="enregistrerTransaction()" data-i18n="page.transactions.new">+ Nouvelle
+          <button id="new-transaction-btn" class="btn-primary" onclick="enregistrerTransaction()"
+            data-i18n="page.transactions.new">+ Nouvelle
             Transaction</button>
         </div>
         <div id="tx-filters" class="login-panel hidden">
@@ -261,7 +268,8 @@
       <div id="page-vote" class="page">
         <div class="page-header">
           <h1 data-i18n="page.vote.title">Votes en cours</h1>
-          <button id="proposal-btn" class="btn-primary" onclick="suggererOperation()" data-i18n="page.vote.suggest">+ Suggérer une opération</button>
+          <button id="proposal-btn" class="btn-primary" onclick="suggererOperation()" data-i18n="page.vote.suggest">+
+            Suggérer une opération</button>
         </div>
         <div id="proposal-panel" class="proposal-panel hidden">
           <div>
@@ -281,10 +289,12 @@
       <div id="page-membres" class="page">
         <div class="page-header">
           <h1 id="members-title">Membres</h1>
-          <button type="button" id="add-member-btn" class="btn-primary" onclick="ajouterMembre()" data-i18n="page.members.add">+ Ajouter une personne</button>
+          <button type="button" id="add-member-btn" class="btn-primary" onclick="ajouterMembre()"
+            data-i18n="page.members.add">+ Ajouter une personne</button>
         </div>
         <div id="members-stats" class="membres-stats">
-          <p><span id="members-count">-</span> <span data-i18n="page.members.registeredSuffix">personnes enregistrées</span></p>
+          <p><span id="members-count">-</span> <span data-i18n="page.members.registeredSuffix">personnes
+              enregistrées</span></p>
         </div>
         <div class="table-container">
           <table>
@@ -312,7 +322,8 @@
       aria-hidden="true">
       <div class="settings-panel-header">
         <h2 id="settings-title" data-i18n="settings.title">Paramètres</h2>
-        <button type="button" id="settings-close-btn" class="settings-panel-close" data-i18n-aria-label="common.close" aria-label="Fermer">&times;</button>
+        <button type="button" id="settings-close-btn" class="settings-panel-close" data-i18n-aria-label="common.close"
+          aria-label="Fermer">&times;</button>
       </div>
       <div class="settings-panel-body">
         <div class="settings-section">
@@ -342,7 +353,8 @@
             <span id="settings-push-label" data-i18n="settings.pushLabel">Notifications Web Push</span>
             <input type="checkbox" id="settings-push-toggle" aria-labelledby="settings-push-label">
           </div>
-          <p id="settings-push-hint" class="login-panel settings-push-hint" data-i18n="settings.pushHint">Activez pour recevoir des alertes sur cet appareil.</p>
+          <p id="settings-push-hint" class="login-panel settings-push-hint" data-i18n="settings.pushHint">Activez pour
+            recevoir des alertes sur cet appareil.</p>
         </div>
         <div class="settings-section">
           <h3 data-i18n="settings.sectionSystem">Informations système</h3>
@@ -372,7 +384,8 @@
       </div>
     </div>
 
-    <div id="paiement-retour-view" class="paiement-retour-view hidden" role="status" aria-live="polite">
+    <div id="paiement-retour-view" class="paiement-retour-view hidden" role="status" aria-live="polite"
+      style="display: none;">
       <div class="paiement-retour-card">
         <div id="paiement-retour-progress">
           <div class="paiement-retour-spinner" aria-hidden="true"></div>

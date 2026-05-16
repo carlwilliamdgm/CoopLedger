@@ -14,6 +14,7 @@ let sseReconnectTimer = null;
 let initialSetupKey = null;
 let paiementRetourAwaitingSse = false;
 let paiementRetourRedirectTimer = null;
+let paiementRetourSafetyTimer = null;
 let demoSessionTimer = null;
 /** @type {Set<string|number>} */
 const voteSubmissionInFlight = new Set();
@@ -65,13 +66,24 @@ function resetPaiementRetourViewDom() {
 }
 
 function showPaiementRetourView() {
-  const root = document.getElementById('paiement-retour-view');
-  if (!root) return;
   clearTimeout(paiementRetourRedirectTimer);
   paiementRetourRedirectTimer = null;
+  clearTimeout(paiementRetourSafetyTimer);
+  paiementRetourSafetyTimer = null;
   paiementRetourAwaitingSse = true;
-  resetPaiementRetourViewDom();
-  root.classList.remove('hidden');
+  
+  // Safety timeout: after 3 minutes, stop awaiting SSE silently
+  paiementRetourSafetyTimer = setTimeout(() => {
+    paiementRetourAwaitingSse = false;
+    paiementRetourSafetyTimer = null;
+  }, 3 * 60 * 1000);
+  
+  // Immediately redirect to #cotisations and refresh
+  showPage('cotisations');
+  chargerCotisations();
+  
+  // Show toast notification
+  showAppToast('Paiement reçu — confirmation en cours...');
 }
 
 function hidePaiementRetourView() {
@@ -79,6 +91,8 @@ function hidePaiementRetourView() {
   if (!root) return;
   clearTimeout(paiementRetourRedirectTimer);
   paiementRetourRedirectTimer = null;
+  clearTimeout(paiementRetourSafetyTimer);
+  paiementRetourSafetyTimer = null;
   paiementRetourAwaitingSse = false;
   root.classList.add('hidden');
   resetPaiementRetourViewDom();
@@ -89,14 +103,14 @@ function onPaiementRetourCotisationNotification(notification) {
   if (notification.type !== 'cotisation' && notification.type !== 'paiement_confirme') return;
 
   paiementRetourAwaitingSse = false;
-  document.getElementById('paiement-retour-progress')?.classList.add('hidden');
-  document.getElementById('paiement-retour-success')?.classList.remove('hidden');
+  clearTimeout(paiementRetourSafetyTimer);
+  paiementRetourSafetyTimer = null;
 
-  paiementRetourRedirectTimer = setTimeout(() => {
-    paiementRetourRedirectTimer = null;
-    hidePaiementRetourView();
-    window.location.href = `${window.location.origin}/#cotisations`;
-  }, 3000);
+  // Show success toast
+  showAppToast('Cotisation confirmée et scellée sur Stellar ✓');
+  
+  // Refresh cotisations list
+  chargerCotisations();
 }
 
 /** @type {MediaQueryList|null} */
